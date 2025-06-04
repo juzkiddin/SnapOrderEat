@@ -3,6 +3,13 @@ import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import type { NextAuthOptions, User } from "next-auth";
 
+// Determine if NEXTAUTH_URL implies a secure context (HTTPS)
+const useSecureCookies = process.env.NEXTAUTH_URL?.startsWith('https://') ?? false;
+// It's good practice to also consider NODE_ENV, but for this specific iframe issue,
+// the secure nature of the URL is the primary driver for SameSite=None.
+const isDevelopmentOrSecurePreview = process.env.NODE_ENV === 'development' || useSecureCookies;
+
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -11,25 +18,17 @@ export const authOptions: NextAuthOptions = {
         phoneNumber: { label: "Phone Number", type: "text" },
         tableId: { label: "Table ID", type: "text" },
         billId: { label: "Bill ID", type: "text" },
-        // We don't need waiterOtp or phoneOtp here as they are verified by the custom flow before signIn is called.
       },
       async authorize(credentials, req) {
-        // This function is called when signIn (with "credentials" provider) is invoked.
-        // The custom OTP flow in LoginFlow.tsx has already verified the user.
-        // Here, we just take the verified details and create a NextAuth session.
-
         if (credentials?.phoneNumber && credentials?.tableId && credentials?.billId) {
-          // You could add additional checks here if needed, e.g., verify the billId structure.
-          // For now, we trust the data coming from our LoginFlow after successful OTP.
           const user: User = {
-            id: credentials.phoneNumber, // Use phoneNumber as a unique ID for the user in NextAuth
+            id: credentials.phoneNumber,
             phoneNumber: credentials.phoneNumber,
             tableId: credentials.tableId,
             billId: credentials.billId,
           };
           return user;
         }
-        // Return null if credentials are not valid or missing
         return null;
       },
     }),
@@ -39,31 +38,73 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async jwt({ token, user }) {
-      // Persist the custom user data to the JWT
       if (user) {
-        token.phoneNumber = user.phoneNumber;
-        token.tableId = user.tableId;
-        token.billId = user.billId;
+        token.phoneNumber = user.phoneNumber ?? null;
+        token.tableId = user.tableId ?? null;
+        token.billId = user.billId ?? null;
       }
       return token;
     },
     async session({ session, token }) {
-      // Send properties to the client, like an access_token and user id from a provider.
-      if (token && session.user) {
-        session.user.phoneNumber = token.phoneNumber as string;
-        session.user.tableId = token.tableId as string;
-        session.user.billId = token.billId as string;
+      if (token) {
+        session.user = {
+          ...session.user, // Keep existing session.user fields if any
+          phoneNumber: token.phoneNumber as string | null,
+          tableId: token.tableId as string | null,
+          billId: token.billId as string | null,
+        };
       }
       return session;
     },
   },
   pages: {
-    signIn: '/', // Redirect users to home page if signIn page is accessed directly
-    // You might want to point to your [tableId] page if direct access to signIn is attempted,
-    // but NextAuth usually handles this well by just not showing a page if not configured.
-    // For a Credentials provider, direct access to a sign-in page is less common.
+    signIn: '/',
   },
   secret: process.env.NEXTAUTH_SECRET,
+  cookies: {
+    // CSRF token: Critical for POST requests like credentials sign-in
+    csrfToken: {
+      name: `${useSecureCookies ? '__Host-' : ''}next-auth.csrf-token`,
+      options: {
+        httpOnly: true,
+        sameSite: isDevelopmentOrSecurePreview && useSecureCookies ? 'none' : 'lax',
+        path: '/',
+        secure: useSecureCookies,
+      },
+    },
+    // Session token
+    sessionToken: {
+      name: `${useSecureCookies ? '__Secure-' : ''}next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: isDevelopmentOrSecurePreview && useSecureCookies ? 'none' : 'lax',
+        path: '/',
+        secure: useSecureCookies,
+      },
+    },
+    // Callback URL cookie
+    callbackUrl: {
+      name: `${useSecureCookies ? '__Secure-' : ''}next-auth.callback-url`,
+      options: {
+        // httpOnly: false, // Typically callbackUrl is read by client JS, so not httpOnly
+        sameSite: isDevelopmentOrSecurePreview && useSecureCookies ? 'none' : 'lax',
+        path: '/',
+        secure: useSecureCookies,
+      },
+    },
+    // Add other cookies if PKCE or other flows are used and cause issues
+    // For example, PKCE code verifier:
+    // pkceCodeVerifier: {
+    //   name: `${useSecureCookies ? '__Secure-' : ''}next-auth.pkce.code_verifier`,
+    //   options: {
+    //     httpOnly: true,
+    //     sameSite: isDevelopmentOrSecurePreview && useSecureCookies ? 'none' : 'lax',
+    //     path: '/',
+    //     secure: useSecureCookies,
+    //     maxAge: 60 * 15, // 15 minutes
+    //   },
+    // },
+  }
 };
 
 const handler = NextAuth(authOptions);
