@@ -39,7 +39,7 @@ export default function MenuNavigationControls({
       </AnimatePresence>
       <motion.div
         className="relative flex-grow"
-        layout
+        // Removed layout prop here to prevent undesired animation of the input container itself
         transition={{ duration: 0.3, ease: "easeInOut" }}
       >
         <Input
