@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-// import { signIn } from 'next-auth/react'; // No longer using next-auth signIn directly here
+import { signIn } from 'next-auth/react'; // Import signIn from next-auth/react
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +27,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   const [phoneNumber, setPhoneNumber] = useState("");
   const [enteredSmsOtp, setEnteredSmsOtp] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false); // Renamed from isLoadingLocally
+  const [isLoading, setIsLoading] = useState(false); 
 
   const [waiterApiUuid, setWaiterApiUuid] = useState<string | null>(null);
   const [waiterOtpAttemptsLeft, setWaiterOtpAttemptsLeft] = useState<number | null>(null);
@@ -44,11 +44,9 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   const isOtpGenerationRequestInFlight = useRef(false);
   const isSmsOtpGenerationRequestInFlight = useRef(false);
   
-  // const { setIsLoading: setGlobalLoading } = useLoading(); // For global spinner
-  const authContext = useAuth(); // Use the direct AuthContext
+  const authContext = useAuth(); 
   const router = useRouter();
 
-  // To track which specific async operation is in progress for better error messages
   const [stepInProgress, setStepInProgress] = useState<string>('idle');
 
 
@@ -82,7 +80,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   };
 
   const startReRequestWaiterOtpTimer = () => {
-    setReRequestWaiterOtpCountdown(240); // 4 minutes
+    setReRequestWaiterOtpCountdown(240); 
     if (reRequestWaiterIntervalRef.current) {
       clearInterval(reRequestWaiterIntervalRef.current);
     }
@@ -119,7 +117,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     setError(null);
     if (!isRetry) setWaiterOtpAttemptsLeft(null);
     setIsLoading(true);
-    // setGlobalLoading(true);
     let apiResponse: Response | undefined;
 
     try {
@@ -142,7 +139,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       } catch (jsonError: any) {
         setError(`OTP generation response error. Status: ${apiResponse?.status}. ${jsonError.message}`);
         setIsLoading(false);
-        // setGlobalLoading(false);
         isOtpGenerationRequestInFlight.current = false;
         return;
       }
@@ -171,7 +167,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       console.error("LoginFlow: Error during handleWaiterOtpInstructionProceed", err);
     } finally {
       setIsLoading(false);
-      // setGlobalLoading(false);
       isOtpGenerationRequestInFlight.current = false;
     }
   };
@@ -183,7 +178,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     }
     setError(null);
     setIsLoading(true);
-    // setGlobalLoading(true);
 
     try {
       const response = await fetch('https://otpapi.snapordereat.in/otp/verify', {
@@ -217,7 +211,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       }
     } finally {
       setIsLoading(false);
-      // setGlobalLoading(false);
     }
   };
 
@@ -232,7 +225,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     isSmsOtpGenerationRequestInFlight.current = true;
     setError(null);
     setIsLoading(true);
-    // setGlobalLoading(true);
     const formattedPhoneNumber = `+91${phoneNumber}`;
 
     try {
@@ -270,7 +262,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       }
     } finally {
       setIsLoading(false);
-      // setGlobalLoading(false);
       isSmsOtpGenerationRequestInFlight.current = false;
     }
   };
@@ -282,9 +273,8 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     }
     setError(null);
     setIsLoading(true);
-    // setGlobalLoading(true);
     setStepInProgress('smsVerification');
-    console.log("[LoginFlow] Attempting external SMS OTP verification...");
+    console.log("[LoginFlow] Step: External SMS OTP verification. UUID:", smsOtpUuid, "OTP:", enteredSmsOtp);
 
     try {
       const verifySmsResponse = await fetch('https://otpapi.snapordereat.in/otp/smsverify', {
@@ -298,27 +288,26 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       const verifySmsData = await verifySmsResponse.json();
       console.log("[LoginFlow] External SMS OTP verification response data:", verifySmsData);
 
-
       if (verifySmsResponse.status === 400) {
         setError(verifySmsData.message?.[0] || verifySmsData.error || "Invalid SMS OTP format.");
-        setIsLoading(false); // setGlobalLoading(false);
+        setIsLoading(false);
         return;
       } else if (!verifySmsResponse.ok) {
         setError(verifySmsData.message || verifySmsData.error || `SMS OTP verification failed (status: ${verifySmsResponse.status})`);
-        setIsLoading(false); // setGlobalLoading(false);
+        setIsLoading(false);
         return;
       }
 
       if (verifySmsData.success !== true) {
         setError(verifySmsData.message || "Invalid SMS OTP entered. Please try again.");
-        setIsLoading(false); // setGlobalLoading(false);
+        setIsLoading(false);
         return;
       }
       
       console.log("[LoginFlow] External SMS OTP verified. Proceeding to internal login API call.");
-      setStepInProgress('internalLogin');
+      setStepInProgress('internalLoginApi');
       const formattedPhoneNumber = `+91${phoneNumber}`;
-      console.log("[LoginFlow] Calling /api/auth/login with:", { tableId: tableIdFromUrl, waiterOtp, phoneNumber: formattedPhoneNumber });
+      console.log("[LoginFlow] Step: Internal API call to /api/auth/login with:", { tableId: tableIdFromUrl, waiterOtp, phoneNumber: formattedPhoneNumber });
       const internalLoginResponse = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -329,51 +318,84 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
         }),
       });
       console.log("[LoginFlow] Internal login API response status:", internalLoginResponse.status);
-
-      if (!internalLoginResponse.ok) {
-        const errorText = await internalLoginResponse.text(); // Get raw text first
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText); // Try to parse as JSON
-        } catch (e) {
-          errorData = { error: "Failed to parse error response from internal login API.", details: errorText };
-        }
-        console.error("[LoginFlow] Internal login API call failed. Status:", internalLoginResponse.status, "Response body:", errorText);
-        setError(`Our server had trouble setting up your session (status: ${internalLoginResponse.status}). Details: ${errorData.error || 'Unknown error'}. Please try again.`);
-        setIsLoading(false); // setGlobalLoading(false);
+      
+      const internalLoginResponseText = await internalLoginResponse.text(); // Get raw text first
+      let internalLoginData;
+      try {
+        internalLoginData = JSON.parse(internalLoginResponseText); // Try to parse as JSON
+        console.log("[LoginFlow] Internal login API response data:", internalLoginData);
+      } catch (e) {
+        console.error("[LoginFlow] Failed to parse JSON from internal login API. Status:", internalLoginResponse.status, "Response text:", internalLoginResponseText);
+        setError(`Error communicating with our server (non-JSON response from /api/auth/login). Please try again. Status: ${internalLoginResponse.status}`);
+        setIsLoading(false);
         return;
       }
 
-      const internalLoginData = await internalLoginResponse.json();
-      console.log("[LoginFlow] Internal login API response data:", internalLoginData);
+      if (!internalLoginResponse.ok) {
+        console.error("[LoginFlow] Internal login API call failed. Status:", internalLoginResponse.status, "Data:", internalLoginData);
+        setError(`Our server had trouble preparing your session (status: ${internalLoginResponse.status}). Details: ${internalLoginData.error || 'Unknown error'}. Please try again.`);
+        setIsLoading(false);
+        return;
+      }
 
       if (!internalLoginData.success || !internalLoginData.billId) {
         console.error("[LoginFlow] Internal login API data indicates failure or missing billId:", internalLoginData);
         setError(internalLoginData.message || "Failed to prepare session data from our server (bill ID missing).");
-        setIsLoading(false); // setGlobalLoading(false);
+        setIsLoading(false);
         return;
       }
-      console.log("[LoginFlow] Internal login successful. Proceeding to AuthContext login.");
+      console.log("[LoginFlow] Internal login successful. Proceeding to NextAuth signIn.");
 
-      setStepInProgress('authContextLogin');
-      // This now calls the login method from AuthContext
-      authContext.login(
-        tableIdFromUrl,
-        formattedPhoneNumber,
-        internalLoginData.billId
-      );
-      console.log("[LoginFlow] AuthContext.login called. Calling onLoginSuccess.");
+      setStepInProgress('nextAuthSignIn');
+      console.log("[LoginFlow] Step: Calling NextAuth signIn with credentials:", {
+        phoneNumber: formattedPhoneNumber,
+        tableId: tableIdFromUrl,
+        billId: internalLoginData.billId,
+      });
+
+      const signInResult = await signIn('credentials', {
+        redirect: false, // We handle UI changes based on session status
+        phoneNumber: formattedPhoneNumber,
+        tableId: tableIdFromUrl,
+        billId: internalLoginData.billId,
+      });
+
+      console.log("[LoginFlow] NextAuth signIn result:", signInResult);
+
+      if (signInResult?.error) {
+        console.error("[LoginFlow] NextAuth signIn failed. Error:", signInResult.error);
+        let uiError = `Login failed: ${signInResult.error}.`;
+        if (signInResult.error.toLowerCase().includes("CredentialsSignin") || signInResult.error.toLowerCase().includes("authorize")) {
+            uiError = "Login failed. Please check your details or try again. (Auth error)";
+        } else if (signInResult.error.toLowerCase().includes("fetch")) { // This might catch "Failed to fetch" for NEXTAUTH_URL issues
+            uiError = "Login process interrupted (Network issue during sign-in). Please ensure your NEXTAUTH_URL is correctly set in environment variables and try again.";
+        }
+        setError(uiError);
+        setIsLoading(false);
+        return;
+      }
       
+      if (!signInResult?.ok) {
+         console.error("[LoginFlow] NextAuth signIn was not 'ok'. Full result:", signInResult);
+         setError("Login attempt was not successful. Please try again. (NextAuth status not ok)");
+         setIsLoading(false);
+         return;
+      }
+      
+      console.log("[LoginFlow] NextAuth signIn successful. Calling onLoginSuccess.");
       setStepInProgress('loginSuccess');
-      onLoginSuccess(); // This should trigger TablePage to hide LoginFlow
+      onLoginSuccess(); 
 
     } catch (err: any) {
       console.error(`[LoginFlow] Critical error during ${stepInProgress} step:`, err);
       let displayError = `An unexpected error occurred during the '${stepInProgress}' step. Please try again.`;
-      if (err instanceof TypeError && err.message.toLowerCase().includes("failed to fetch")) {
+      if (err.name === 'TypeError' && err.message.toLowerCase().includes("failed to fetch")) {
          displayError = `Network request failed during '${stepInProgress}'. Please check your internet connection.`;
-         if (stepInProgress === 'authContextLogin' || stepInProgress === 'internalLogin') { // Though less likely for internalLogin if smsVerify worked
-            displayError += " This might indicate a problem with our server or your network connection to it.";
+         if (stepInProgress === 'internalLoginApi') {
+            displayError += " This might indicate a problem with our server endpoint /api/auth/login or your network connection to it.";
+         } else if (stepInProgress === 'nextAuthSignIn') {
+            displayError += " This might indicate an issue with NextAuth.js configuration (e.g., NEXTAUTH_URL) or network. Check console.";
+            console.error("A 'Failed to fetch' error occurred during NextAuth signIn. THIS IS OFTEN DUE TO A MISSING OR INCORRECT `NEXTAUTH_URL` environment variable. Ensure it's set to your application's publicly accessible URL (e.g., http://localhost:9002 for local dev).");
          }
       } else {
         displayError = err.message || `An unexpected error during '${stepInProgress}'.`;
@@ -382,7 +404,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     } finally {
       console.log("[LoginFlow] handleVerifySmsOtpAndLogin finally block. Setting isLoading to false.");
       setIsLoading(false);
-      // setGlobalLoading(false);
       setStepInProgress('idle'); 
     }
   };
@@ -468,7 +489,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
                 variant="link"
                 size="sm"
                 onClick={() => {
-                  authContext.logout(); // Use context logout
+                  authContext.logout(); 
                   setWaiterApiUuid(null);
                   setWaiterOtp("");
                   setError(null);
@@ -607,3 +628,5 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     </div>
   );
 }
+
+    
