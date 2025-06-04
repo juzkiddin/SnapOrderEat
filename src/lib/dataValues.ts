@@ -1,8 +1,9 @@
 
 import type { MenuItemType } from '@/types';
+import type { LucideIcon } from 'lucide-react'; // Keep for PredefinedRequest
 import { 
   Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell 
-} from 'lucide-react';
+} from 'lucide-react'; // Keep for PredefinedRequest icons
 
 // For src/app/[tableId]/page.tsx
 export const sampleMenuData: MenuItemType[] = [
@@ -35,19 +36,24 @@ export const sampleMenuData: MenuItemType[] = [
   },
 ];
 
-export const categoryIcons: { [key: string]: React.ElementType } = { Starters: Soup, Mains: Utensils, Drinks: GlassWater };
-export const categoryOrder = ['Starters', 'Mains', 'Drinks'];
+// Changed to map category name strings to icon name strings
+export const categoryIcons: { [key: string]: string } = { 
+  Starters: "Soup", 
+  Mains: "Utensils", 
+  Drinks: "GlassWater" 
+};
+export const categoryOrder = ['Starters', 'Mains', 'Drinks']; // Fallback category order
 
 export const WELCOME_MESSAGE_VISIBLE_HEIGHT = "h-[90px]";
 
 interface PredefinedRequestOption {
   label: string;
-  icon?: React.ElementType;
+  icon?: React.ElementType; // LucideIcon type might be too strict if some options don't have icons
 }
 export interface PredefinedRequest {
   id: string;
   label: string;
-  icon: React.ElementType;
+  icon: React.ElementType; // LucideIcon type for top-level request category
   type: 'direct' | 'selectOne';
   options?: PredefinedRequestOption[];
 }
@@ -60,6 +66,5 @@ export const predefinedServiceRequests: PredefinedRequest[] = [
 ];
 
 // For src/components/auth/LoginFlow.tsx
-export const MOCKED_WAITER_OTP = "654321"; // This is for the old direct backend check, might be obsolete now if waiter OTP is fully external.
-// export const MOCKED_PHONE_OTP = "123456"; // Removed as phone OTP is now via external SMS API
+export const MOCKED_WAITER_OTP = "654321"; 
     

@@ -5,13 +5,13 @@ import type { MenuItemType } from '@/types';
 import MenuCategory from '@/components/menu/MenuCategory';
 import MenuItemCard from '@/components/menu/MenuItemCard';
 import CategoryCard from '@/components/menu/CategoryCard';
-import { Info } from 'lucide-react';
+import { Info, type LucideIcon } from 'lucide-react'; // Import LucideIcon type
 import { Button } from '@/components/ui/button';
-import type { LucideIcon } from 'lucide-react';
 
-interface CategoryDetail {
+// This now expects resolved icon components for each card
+interface CategoryDetailForDisplay {
   name: string;
-  icon: LucideIcon; // This will be mapped on client from categoryIcons
+  icon: LucideIcon; 
   itemCount: number;
   imageUrl: string;
   dataAiHint: string;
@@ -21,8 +21,8 @@ interface MenuContentDisplayProps {
   searchTerm: string;
   selectedCategory: string | null;
   displayedItems: MenuItemType[];
-  categoryDetails: CategoryDetail[];
-  categoryIcons: { [key: string]: LucideIcon }; // Passed from parent for mapping
+  categoryDetails: CategoryDetailForDisplay[]; // Updated type
+  categoryIcons: { [key: string]: LucideIcon }; // This is the client-side map (e.g., lucideIconComponentsMap)
   onCategorySelect: (categoryName: string) => void;
   onClearSearch: () => void;
   setSearchTerm: (term: string) => void;
@@ -33,7 +33,7 @@ export default function MenuContentDisplay({
   selectedCategory,
   displayedItems,
   categoryDetails,
-  categoryIcons, // Now used to get the actual Icon component
+  categoryIcons, // This is the map like { "Soup": SoupComponent, "Info": InfoComponent }
   onCategorySelect,
   onClearSearch,
   setSearchTerm
@@ -61,7 +61,8 @@ export default function MenuContentDisplay({
           <MenuCategory
             title={selectedCategory + (searchTerm ? ` (matching "${searchTerm}")` : "")}
             items={displayedItems}
-            Icon={categoryIcons[selectedCategory] || Info} // Use categoryIcons prop
+            // Use categoryIcons map with selectedCategory (which is a string name)
+            Icon={categoryIcons[selectedCategory] || categoryIcons.Info || Info} 
             noItemsMessage={searchTerm ? "No items match your search in this category." : undefined}
             showClearSearchButton={!!searchTerm}
             onClearSearchInCategory={() => setSearchTerm("")}
@@ -71,11 +72,12 @@ export default function MenuContentDisplay({
         <section>
           <h2 className="text-xl font-semibold tracking-tight mb-4 text-center">Browse by Category</h2>
           <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+            {/* categoryDetails already contains the resolved icon component as cat.icon */}
             {categoryDetails.map(cat => (
               <CategoryCard 
                 key={cat.name} 
                 categoryName={cat.name} 
-                Icon={categoryIcons[cat.name] || Info} // Use categoryIcons prop
+                Icon={cat.icon} // Use the resolved icon from categoryDetails
                 itemCount={cat.itemCount} 
                 imageUrl={cat.imageUrl} 
                 dataAiHint={cat.dataAiHint} 
