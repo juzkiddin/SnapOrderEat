@@ -20,7 +20,7 @@ export default function MenuNavigationControls({
   onClearSelectionAndSearch
 }: MenuNavigationControlsProps) {
   return (
-    <div className="flex items-center w-full max-w-xl mx-auto mb-4 gap-2 sticky top-16 z-40 bg-background py-3">
+    <div className="flex items-center w-full max-w-xl mx-auto mb-4 gap-2 sticky top-16 z-40 py-3">
       <AnimatePresence>
         {selectedCategory && (
           <motion.div
