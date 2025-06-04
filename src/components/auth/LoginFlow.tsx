@@ -3,14 +3,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { signIn } from 'next-auth/react';
+// import { signIn } from 'next-auth/react'; // No longer using next-auth signIn directly here
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-// import { Label } from '@/components/ui/label'; // Removed as per previous request
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, LogOut } from 'lucide-react';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+// import { useLoading } from '../../contexts/LoadingContext'; // Reverted to relative path
 
 type LoginStep = "enterWaiterOtp" | "enterPhone" | "verifyPhoneOtp";
 type WaiterOtpSubStep = "initialInstruction" | "enterOtp";
@@ -27,7 +27,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   const [phoneNumber, setPhoneNumber] = useState("");
   const [enteredSmsOtp, setEnteredSmsOtp] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Renamed from isLoadingLocally
 
   const [waiterApiUuid, setWaiterApiUuid] = useState<string | null>(null);
   const [waiterOtpAttemptsLeft, setWaiterOtpAttemptsLeft] = useState<number | null>(null);
@@ -43,9 +43,14 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
 
   const isOtpGenerationRequestInFlight = useRef(false);
   const isSmsOtpGenerationRequestInFlight = useRef(false);
-
-  const { logout: localAuthLogout } = useAuth();
+  
+  // const { setIsLoading: setGlobalLoading } = useLoading(); // For global spinner
+  const authContext = useAuth(); // Use the direct AuthContext
   const router = useRouter();
+
+  // To track which specific async operation is in progress for better error messages
+  const [stepInProgress, setStepInProgress] = useState<string>('idle');
+
 
   useEffect(() => {
     return () => {
@@ -77,7 +82,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   };
 
   const startReRequestWaiterOtpTimer = () => {
-    setReRequestWaiterOtpCountdown(240);
+    setReRequestWaiterOtpCountdown(240); // 4 minutes
     if (reRequestWaiterIntervalRef.current) {
       clearInterval(reRequestWaiterIntervalRef.current);
     }
@@ -91,7 +96,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       });
     }, 1000);
   };
-
+  
   const logRateLimitHeaders = (response: Response, context: string) => {
     const limit = response.headers.get('x-ratelimit-limit');
     const remaining = response.headers.get('x-ratelimit-remaining');
@@ -105,6 +110,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     if (logMessage.trim() !== `[${context} - Rate Limit]`) console.log(logMessage);
   };
 
+
   const handleWaiterOtpInstructionProceed = async (isRetry = false) => {
     if (isOtpGenerationRequestInFlight.current && !isRetry) {
       return;
@@ -113,6 +119,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     setError(null);
     if (!isRetry) setWaiterOtpAttemptsLeft(null);
     setIsLoading(true);
+    // setGlobalLoading(true);
     let apiResponse: Response | undefined;
 
     try {
@@ -135,6 +142,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       } catch (jsonError: any) {
         setError(`OTP generation response error. Status: ${apiResponse?.status}. ${jsonError.message}`);
         setIsLoading(false);
+        // setGlobalLoading(false);
         isOtpGenerationRequestInFlight.current = false;
         return;
       }
@@ -150,7 +158,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
         setWaiterOtpSubStep("enterOtp");
         setError(null);
         if (isRetry) {
-          setWaiterOtp("");
+          setWaiterOtp(""); 
         }
         startReRequestWaiterOtpTimer();
       }
@@ -160,8 +168,10 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       } else {
         setError(err.message || "An unexpected error occurred while requesting Waiter OTP. Check console.");
       }
+      console.error("LoginFlow: Error during handleWaiterOtpInstructionProceed", err);
     } finally {
       setIsLoading(false);
+      // setGlobalLoading(false);
       isOtpGenerationRequestInFlight.current = false;
     }
   };
@@ -173,6 +183,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     }
     setError(null);
     setIsLoading(true);
+    // setGlobalLoading(true);
 
     try {
       const response = await fetch('https://otpapi.snapordereat.in/otp/verify', {
@@ -180,7 +191,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uuid: waiterApiUuid, otpCode: waiterOtp }),
       });
-
+      
       logRateLimitHeaders(response, "Waiter OTP Verify");
       const data = await response.json();
 
@@ -192,12 +203,11 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
           setError(null);
           setStep("enterPhone");
         } else {
-          if (data.attemptsLeft !== undefined) setWaiterOtpAttemptsLeft(Number(data.attemptsLeft));
-          setError(data.message || "Invalid Waiter OTP. Please try again.");
+           if (data.attemptsLeft !== undefined) setWaiterOtpAttemptsLeft(Number(data.attemptsLeft));
+           setError(data.message || "Invalid Waiter OTP. Please try again.");
         }
       }
-    } catch (err: any)
-     {
+    } catch (err: any) {
       if (err instanceof TypeError && err.message.toLowerCase().includes("failed to fetch")) {
         setError("Network error during Waiter OTP verification. Check connection/CORS. See browser console.");
         console.error("LoginFlow: 'Failed to fetch' calling /otp/verify", err);
@@ -207,6 +217,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       }
     } finally {
       setIsLoading(false);
+      // setGlobalLoading(false);
     }
   };
 
@@ -217,10 +228,11 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       setError("Please enter a valid 10-digit phone number.");
       return;
     }
-
+    
     isSmsOtpGenerationRequestInFlight.current = true;
     setError(null);
     setIsLoading(true);
+    // setGlobalLoading(true);
     const formattedPhoneNumber = `+91${phoneNumber}`;
 
     try {
@@ -229,7 +241,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mobileNum: formattedPhoneNumber }),
       });
-
+      
       logRateLimitHeaders(response, "SMS OTP Gen");
       const data = await response.json();
 
@@ -239,7 +251,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
         const retryAfter = response.headers.get('retry-after') || '30';
         setError(`Too many requests for SMS OTP. Please try again in ${retryAfter} seconds.`);
       } else if (response.status === 500) {
-        setError(data.message || "Failed to send SMS OTP. Please try again later.");
+         setError(data.message || "Failed to send SMS OTP. Please try again later.");
       } else if (!response.ok) {
          setError(data.message || data.error || `SMS OTP generation failed: ${response.status}`);
       } else {
@@ -258,6 +270,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       }
     } finally {
       setIsLoading(false);
+      // setGlobalLoading(false);
       isSmsOtpGenerationRequestInFlight.current = false;
     }
   };
@@ -269,6 +282,9 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     }
     setError(null);
     setIsLoading(true);
+    // setGlobalLoading(true);
+    setStepInProgress('smsVerification');
+    console.log("[LoginFlow] Attempting external SMS OTP verification...");
 
     try {
       const verifySmsResponse = await fetch('https://otpapi.snapordereat.in/otp/smsverify', {
@@ -278,82 +294,96 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       });
 
       logRateLimitHeaders(verifySmsResponse, "SMS OTP Verify");
+      console.log("[LoginFlow] External SMS OTP verification response status:", verifySmsResponse.status);
       const verifySmsData = await verifySmsResponse.json();
+      console.log("[LoginFlow] External SMS OTP verification response data:", verifySmsData);
+
 
       if (verifySmsResponse.status === 400) {
         setError(verifySmsData.message?.[0] || verifySmsData.error || "Invalid SMS OTP format.");
-        setIsLoading(false);
+        setIsLoading(false); // setGlobalLoading(false);
         return;
       } else if (!verifySmsResponse.ok) {
-        setError(verifySmsData.message || verifySmsData.error || `SMS OTP verification failed: ${verifySmsResponse.status}`);
-        setIsLoading(false);
+        setError(verifySmsData.message || verifySmsData.error || `SMS OTP verification failed (status: ${verifySmsResponse.status})`);
+        setIsLoading(false); // setGlobalLoading(false);
         return;
       }
 
       if (verifySmsData.success !== true) {
         setError(verifySmsData.message || "Invalid SMS OTP entered. Please try again.");
-        setIsLoading(false);
+        setIsLoading(false); // setGlobalLoading(false);
         return;
       }
-
+      
+      console.log("[LoginFlow] External SMS OTP verified. Proceeding to internal login API call.");
+      setStepInProgress('internalLogin');
       const formattedPhoneNumber = `+91${phoneNumber}`;
+      console.log("[LoginFlow] Calling /api/auth/login with:", { tableId: tableIdFromUrl, waiterOtp, phoneNumber: formattedPhoneNumber });
       const internalLoginResponse = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tableId: tableIdFromUrl,
-          waiterOtp, // This is the pre-verified waiter OTP
+          waiterOtp, 
           phoneNumber: formattedPhoneNumber,
-          // phoneOtp is no longer sent here as it's verified by the external API
         }),
       });
+      console.log("[LoginFlow] Internal login API response status:", internalLoginResponse.status);
 
       if (!internalLoginResponse.ok) {
-        const errorData = await internalLoginResponse.json();
-        setError(errorData.error || `Internal login setup failed: ${internalLoginResponse.status}`);
-        setIsLoading(false);
+        const errorText = await internalLoginResponse.text(); // Get raw text first
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText); // Try to parse as JSON
+        } catch (e) {
+          errorData = { error: "Failed to parse error response from internal login API.", details: errorText };
+        }
+        console.error("[LoginFlow] Internal login API call failed. Status:", internalLoginResponse.status, "Response body:", errorText);
+        setError(`Our server had trouble setting up your session (status: ${internalLoginResponse.status}). Details: ${errorData.error || 'Unknown error'}. Please try again.`);
+        setIsLoading(false); // setGlobalLoading(false);
         return;
       }
 
       const internalLoginData = await internalLoginResponse.json();
+      console.log("[LoginFlow] Internal login API response data:", internalLoginData);
+
       if (!internalLoginData.success || !internalLoginData.billId) {
-        setError(internalLoginData.message || "Failed to prepare session data.");
-        setIsLoading(false);
+        console.error("[LoginFlow] Internal login API data indicates failure or missing billId:", internalLoginData);
+        setError(internalLoginData.message || "Failed to prepare session data from our server (bill ID missing).");
+        setIsLoading(false); // setGlobalLoading(false);
         return;
       }
+      console.log("[LoginFlow] Internal login successful. Proceeding to AuthContext login.");
 
-      // Now sign in with NextAuth using the details from our backend
-      const signInResponse = await signIn('credentials', {
-        redirect: false,
-        phoneNumber: formattedPhoneNumber,
-        tableId: tableIdFromUrl,
-        billId: internalLoginData.billId,
-      });
-
-      if (signInResponse?.error) {
-        setError(`NextAuth Sign-In Failed: ${signInResponse.error}`);
-        setIsLoading(false);
-        return;
-      }
-
-      if (signInResponse?.ok) {
-        onLoginSuccess(); // Trigger callback which should update AuthContext and page state
-      } else {
-        setError("Sign-in was not successful. Please try again.");
-      }
+      setStepInProgress('authContextLogin');
+      // This now calls the login method from AuthContext
+      authContext.login(
+        tableIdFromUrl,
+        formattedPhoneNumber,
+        internalLoginData.billId
+      );
+      console.log("[LoginFlow] AuthContext.login called. Calling onLoginSuccess.");
+      
+      setStepInProgress('loginSuccess');
+      onLoginSuccess(); // This should trigger TablePage to hide LoginFlow
 
     } catch (err: any) {
-      let displayError = "An error occurred. Please try again.";
+      console.error(`[LoginFlow] Critical error during ${stepInProgress} step:`, err);
+      let displayError = `An unexpected error occurred during the '${stepInProgress}' step. Please try again.`;
       if (err instanceof TypeError && err.message.toLowerCase().includes("failed to fetch")) {
-        displayError = "Network request failed during OTP verification or login. Please check your internet connection and ensure the server is reachable. See browser console for more details (e.g., CORS errors).";
-        console.error("LoginFlow: 'Failed to fetch' encountered during OTP verification or login process. Potential API: https://otpapi.snapordereat.in/otp/smsverify or /api/auth/login. Error:", err);
+         displayError = `Network request failed during '${stepInProgress}'. Please check your internet connection.`;
+         if (stepInProgress === 'authContextLogin' || stepInProgress === 'internalLogin') { // Though less likely for internalLogin if smsVerify worked
+            displayError += " This might indicate a problem with our server or your network connection to it.";
+         }
       } else {
-        displayError = err.message || "An unexpected error occurred during login.";
-        console.error("LoginFlow: Error during verifySmsOtpAndLogin (not 'Failed to fetch'):", err);
+        displayError = err.message || `An unexpected error during '${stepInProgress}'.`;
       }
       setError(displayError);
     } finally {
+      console.log("[LoginFlow] handleVerifySmsOtpAndLogin finally block. Setting isLoading to false.");
       setIsLoading(false);
+      // setGlobalLoading(false);
+      setStepInProgress('idle'); 
     }
   };
 
@@ -367,7 +397,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
               <CardHeader key="header-waiter-instr">
                 <CardTitle className="text-2xl text-center">Confirm Presence</CardTitle>
                 <CardDescription className="text-center">
-                  Welcome to The Tasty Spoon!!
+                  Welcome to The Tasty Spoon!
                 </CardDescription>
               </CardHeader>
               <CardContent key="content-waiter-instr">
@@ -425,29 +455,29 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
                 Confirm Presence
               </Button>
               <Button
-                variant="default" // Or "outline" if you prefer secondary styling for this
-                onClick={() => handleWaiterOtpInstructionProceed(true)} // Pass true for isRetry
+                variant="default" 
+                onClick={() => handleWaiterOtpInstructionProceed(true)}
                 className="w-full"
                 disabled={isLoading || reRequestWaiterOtpCountdown > 0}
               >
                 {isLoading && reRequestWaiterOtpCountdown > 0 && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Re-Request OTP
+                 Re-Request OTP
                 {reRequestWaiterOtpCountdown > 0 && ` (${Math.floor(reRequestWaiterOtpCountdown / 60)}:${String(reRequestWaiterOtpCountdown % 60).padStart(2, '0')})`}
               </Button>
-              <Button
+               <Button
                 variant="link"
                 size="sm"
                 onClick={() => {
-                  localAuthLogout(); // Clears NextAuth session via AuthContext
+                  authContext.logout(); // Use context logout
                   setWaiterApiUuid(null);
                   setWaiterOtp("");
                   setError(null);
                   setWaiterOtpSubStep("initialInstruction");
                   if (reRequestWaiterIntervalRef.current) clearInterval(reRequestWaiterIntervalRef.current);
                   setReRequestWaiterOtpCountdown(0);
-                  router.push('/'); // Navigate to landing page
+                  router.push('/'); 
                 }}
-                className="mt-1" // Reduced margin if buttons are closer
+                className="mt-1"
                 disabled={isLoading}
               >
                 <LogOut className="mr-2 h-4 w-4" />
@@ -495,21 +525,20 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
                 variant="link"
                 size="sm"
                 onClick={() => {
-                  localAuthLogout(); // Clears NextAuth session
+                  authContext.logout(); 
                   setWaiterApiUuid(null);
                   setWaiterOtp("");
                   setWaiterOtpSubStep("initialInstruction");
                   if (reRequestWaiterIntervalRef.current) clearInterval(reRequestWaiterIntervalRef.current);
                   setReRequestWaiterOtpCountdown(0);
-                  setStep("enterWaiterOtp");
+                  setStep("enterWaiterOtp"); 
                   setError(null);
-                  // router.push('/'); // Already in login flow, might not need redirect here unless desired
                 }}
                 className="mt-2"
                 disabled={isLoading}
               >
                 <LogOut className="mr-2 h-4 w-4" />
-                Vacate Table
+                 Vacate Table
               </Button>
             </CardFooter>
           </>
@@ -552,7 +581,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
               <Button
                 variant="link"
                 size="sm"
-                onClick={handleSendSmsOtp} // Re-uses the send SMS OTP logic
+                onClick={handleSendSmsOtp}
                 className="mt-2"
                 disabled={isLoading || !canResendSmsOtp || isSmsOtpGenerationRequestInFlight.current}
               >
@@ -578,5 +607,3 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     </div>
   );
 }
-
-    
