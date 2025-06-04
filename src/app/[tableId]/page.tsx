@@ -12,18 +12,15 @@ import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
 
 import type { MenuItemType } from '@/types';
 import { 
-  Info, Loader2, Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell, PackageSearch, ShoppingBasket, HeartHandshake 
-} from 'lucide-react'; // Added more icons for flexibility
+  Info, Loader2, Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell, PackageSearch, ShoppingBasket, HeartHandshake, Popcorn 
+} from 'lucide-react'; // Added Popcorn and more icons for flexibility
 import type { LucideIcon } from 'lucide-react';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import {
   WELCOME_MESSAGE_VISIBLE_HEIGHT,
-  // categoryIcons as localCategoryIconNameMap, // No longer needed here directly for icon resolution logic
-  // predefinedServiceRequests, // Still needed for SpecialRequestDialog, imported there
   MOCKED_WAITER_OTP,
-  // MOCKED_PHONE_OTP // Already removed
 } from '@/lib/dataValues';
 
 const IS_DEV_SKIP_LOGIN = false;
@@ -41,9 +38,10 @@ const lucideIconComponentsMap: { [key: string]: LucideIcon } = {
   UtensilsCrossed,
   Layers,
   ConciergeBell,
-  PackageSearch, // Example, add more as needed from your API or defaults
+  PackageSearch, 
   ShoppingBasket,
   HeartHandshake,
+  Popcorn, // Added Popcorn
 };
 
 
@@ -55,7 +53,7 @@ export default function TablePage() {
     isAuthenticated,
     tableId: authTableId,
     billId: authBillId,
-    login, // Assuming login is from AuthContext after NextAuth removal or for custom logic
+    // login, // Assuming login is from AuthContext after NextAuth removal or for custom logic - Now using NextAuth signIn
     logout,
     currentBillPaymentStatus,
     isLoadingBillStatus
@@ -74,7 +72,6 @@ export default function TablePage() {
   const [menuError, setMenuError] = useState<string | null>(null);
 
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
-  // fabState related state from PageFloatingButtons is not needed here anymore.
   const [isDevLoggingIn, setIsDevLoggingIn] = useState(false);
 
   const cartItemCount = getItemCount();
@@ -84,34 +81,34 @@ export default function TablePage() {
     if (IS_DEV_SKIP_LOGIN && tableIdFromUrl && !(isAuthenticated && authTableId === tableIdFromUrl) && !isDevLoggingIn) {
       console.log(`DEV MODE: Auto-logging in via API for table ${tableIdFromUrl}`);
       setIsDevLoggingIn(true);
-      const mockPhoneNumber = "+910000000000"; // Ensure it's formatted as expected by API if necessary
+      const mockPhoneNumber = "+910000000000"; 
 
       const performDevLogin = async () => {
         try {
-          // Simulate the entire LoginFlow's final steps for dev mode
-          // 1. Call internal login API
           const internalLoginResponse = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tableId: tableIdFromUrl,
-              waiterOtp: MOCKED_WAITER_OTP, // Assuming still needed for mock
+              waiterOtp: MOCKED_WAITER_OTP, 
               phoneNumber: mockPhoneNumber,
-              // phoneOtp: MOCKED_PHONE_OTP, // Removed
             }),
           });
           const internalLoginData = await internalLoginResponse.json();
 
           if (internalLoginResponse.ok && internalLoginData.success && internalLoginData.billId) {
-             // 2. Call NextAuth signIn (or AuthContext.login if NextAuth removed)
-            const signInResult = await login( // Using AuthContext's login
-              tableIdFromUrl,
-              mockPhoneNumber, // Use the phone number used for API
-              internalLoginData.billId
-            );
-            // Assuming login from AuthContext doesn't return a complex object like signIn
-            // and directly updates context. If it returns error status, handle it.
-            // For simplicity, assuming it works or throws if error.
+            // For dev mode, directly use next-auth's signIn after internal API success
+            const { signIn } = await import('next-auth/react'); // Dynamically import for cleaner dev block
+            const signInResult = await signIn('credentials', {
+              redirect: false,
+              phoneNumber: mockPhoneNumber,
+              tableId: tableIdFromUrl,
+              billId: internalLoginData.billId,
+            });
+            if (signInResult?.error) {
+              console.error("Dev auto-login (NextAuth signIn) failed:", signInResult.error);
+              setShowLogin(true);
+            }
             // onLoginSuccess behavior is implicitly handled by useEffect watching isAuthenticated
           } else {
             console.error("Dev auto-login (internal API) failed:", internalLoginData.error || `Status: ${internalLoginResponse.status}`);
@@ -126,7 +123,7 @@ export default function TablePage() {
       };
       performDevLogin();
     }
-  }, [IS_DEV_SKIP_LOGIN, tableIdFromUrl, login, isAuthenticated, authTableId, isDevLoggingIn]);
+  }, [IS_DEV_SKIP_LOGIN, tableIdFromUrl, isAuthenticated, authTableId, isDevLoggingIn]);
 
 
   useEffect(() => {
@@ -187,23 +184,20 @@ export default function TablePage() {
     return () => clearTimeout(timer);
   }, [showLogin]);
 
-  // FAB related useEffects are removed as PageFloatingButtons manages its own state
-
 
   const categoryDetails = useMemo(() => {
     return fetchedCategories
       .map(cat => { // cat is {name: string, iconName: string}
         const itemsInCategory = menuItems.filter(item => item.category === cat.name);
-        const IconComponent = lucideIconComponentsMap[cat.iconName] || lucideIconComponentsMap.Info;
+        const IconComponent = lucideIconComponentsMap[cat.iconName] || lucideIconComponentsMap.Info || Info; // Ensure Info is a final fallback
         
-        // Default placeholder, specific ones can be set if needed, or fetched if API provides them
         let imageUrl = 'https://placehold.co/320x180.png';
-        let dataAiHint = 'food category'; // Generic hint
+        let dataAiHint = 'food category'; 
 
-        // Example of setting specific hints/images for known categories, if desired
         if (cat.name === 'Starters') { dataAiHint = 'appetizers selection'; }
         else if (cat.name === 'Mains') { dataAiHint = 'hearty meals'; }
         else if (cat.name === 'Drinks') { dataAiHint = 'refreshing beverages'; }
+        else if (cat.iconName === 'Popcorn') { dataAiHint = 'snacks popcorn';} // Example if API returns "Popcorn" for a category
         
         return { 
           name: cat.name, 
@@ -246,7 +240,7 @@ export default function TablePage() {
 
   const handleCategorySelect = (categoryName: string) => {
     setSelectedCategory(categoryName);
-    setSearchTerm(""); // Clear search when a category is selected
+    setSearchTerm(""); 
   };
 
   const openSpecialRequestDialog = () => {
@@ -263,7 +257,6 @@ export default function TablePage() {
     );
   }
   
-  // This check is for NextAuth, might need adjustment if AuthContext state behaves differently
   if (isDevLoggingIn || (isAuthenticated && isLoadingBillStatus && !showLogin)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
@@ -274,7 +267,7 @@ export default function TablePage() {
   }
 
   if (showLogin) {
-    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* State change handled by useEffect */ }} />;
+    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* State change handled by useEffect watching session */ }} />;
   }
 
   if (isMenuLoading) {
@@ -314,8 +307,8 @@ export default function TablePage() {
         searchTerm={searchTerm}
         selectedCategory={selectedCategory}
         displayedItems={displayedItems}
-        categoryDetails={categoryDetails} // Contains resolved icon components
-        categoryIcons={lucideIconComponentsMap} // Pass the full map for title icon lookup
+        categoryDetails={categoryDetails} 
+        categoryIcons={lucideIconComponentsMap} 
         onCategorySelect={handleCategorySelect}
         onClearSearch={clearSelectionAndSearch}
         setSearchTerm={setSearchTerm}
@@ -329,7 +322,6 @@ export default function TablePage() {
         cartItemCount={cartItemCount}
         cartTotal={cartTotal}
         onOpenCartSheet={() => setIsCartSheetOpen(true)}
-        // fabState prop is removed, handled internally by PageFloatingButtons
       />
 
       <SpecialRequestDialog

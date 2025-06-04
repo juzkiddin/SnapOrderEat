@@ -2,7 +2,7 @@
 import type { MenuItemType } from '@/types';
 import type { LucideIcon } from 'lucide-react'; // Keep for PredefinedRequest
 import { 
-  Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell 
+  Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell, Popcorn
 } from 'lucide-react'; // Keep for PredefinedRequest icons
 
 // For src/app/[tableId]/page.tsx
