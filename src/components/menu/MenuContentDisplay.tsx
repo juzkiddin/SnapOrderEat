@@ -38,9 +38,10 @@ export default function MenuContentDisplay({
   onClearSearch,
   setSearchTerm
 }: MenuContentDisplayProps) {
-  return (
-    <div className="mt-4">
-      {searchTerm && !selectedCategory ? (
+
+  if (searchTerm && !selectedCategory) {
+    return (
+      <div className="mt-4">
         <section>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold tracking-tight">
@@ -56,37 +57,51 @@ export default function MenuContentDisplay({
             <p className="text-muted-foreground text-center py-6">Try a different search term or browse categories.</p>
           )}
         </section>
-      ) : selectedCategory ? (
+      </div>
+    );
+  }
+  
+  if (selectedCategory) {
+    const activeCategoryData = categoryDetails.find(cat => cat.name === selectedCategory);
+    // Use the pre-resolved icon from categoryDetails if available, otherwise fallback.
+    const IconComponentForTitle = activeCategoryData ? activeCategoryData.icon : (categoryIcons.Info || Info);
+
+    return (
+      <div className="mt-4">
         <section>
           <MenuCategory
             title={selectedCategory + (searchTerm ? ` (matching "${searchTerm}")` : "")}
             items={displayedItems}
-            // Use categoryIcons (LucideIcons namespace) with selectedCategory (which is a string name)
-            // Fallback to Info icon from the namespace, or the directly imported Info as a final safety net.
-            Icon={categoryIcons[selectedCategory as keyof typeof categoryIcons] || categoryIcons.Info || Info} 
+            Icon={IconComponentForTitle} 
             noItemsMessage={searchTerm ? "No items match your search in this category." : undefined}
             showClearSearchButton={!!searchTerm}
             onClearSearchInCategory={() => setSearchTerm("")}
           />
         </section>
-      ) : (
-        <section>
-          <h2 className="text-xl font-semibold tracking-tight mb-4 text-center">Browse by Category</h2>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-6">
-            {categoryDetails.map(cat => (
-              <CategoryCard 
-                key={cat.name} 
-                categoryName={cat.name} 
-                Icon={cat.icon} 
-                itemCount={cat.itemCount} 
-                imageUrl={cat.imageUrl} 
-                dataAiHint={cat.dataAiHint} 
-                onClick={() => onCategorySelect(cat.name)} 
-              />
-            ))}
-          </div>
-        </section>
-      )}
+      </div>
+    );
+  }
+
+  // Default view: browse by category
+  return (
+    <div className="mt-4">
+      <section>
+        <h2 className="text-xl font-semibold tracking-tight mb-4 text-center">Browse by Category</h2>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+          {categoryDetails.map(cat => (
+            <CategoryCard 
+              key={cat.name} 
+              categoryName={cat.name} 
+              Icon={cat.icon} // cat.icon is already the resolved Lucide component
+              itemCount={cat.itemCount} 
+              imageUrl={cat.imageUrl} 
+              dataAiHint={cat.dataAiHint} 
+              onClick={() => onCategorySelect(cat.name)} 
+            />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
+
