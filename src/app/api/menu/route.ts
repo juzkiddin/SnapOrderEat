@@ -55,7 +55,15 @@ export async function GET() {
       console.log('Using categories from external API:', activeCategoryOrder);
     } else {
       activeCategoryOrder = localCategoryOrder;
-      console.warn('Failed to fetch categories from external API or RESTAURANT_ID not set, using local fallback:', activeCategoryOrder);
+      if (process.env.RESTAURANT_ID) {
+        // RESTAURANT_ID was set, so failure was likely an API issue.
+        // fetchCategoriesFromExternalAPI would have already logged a specific error.
+        console.error('Error fetching categories from external API (details likely logged above by the fetch utility). Using local fallback.', activeCategoryOrder);
+      } else {
+        // RESTAURANT_ID was not set. fetchCategoriesFromExternalAPI already logged a warning.
+        // This console.warn just confirms fallback action.
+        console.warn('RESTAURANT_ID not set. Using local fallback for categories.', activeCategoryOrder);
+      }
     }
 
     // Prepare category data to send to client.
@@ -75,3 +83,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Internal Server Error fetching menu' }, { status: 500 });
   }
 }
+
