@@ -11,10 +11,11 @@ import SpecialRequestDialog from '@/components/menu/SpecialRequestDialog';
 import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
 
 import type { MenuItemType } from '@/types';
-import { 
-  Info, Loader2, Utensils, Soup, GlassWater, Droplet, Flame, Snowflake, Blend, UtensilsCrossed, Layers, ConciergeBell, PackageSearch, ShoppingBasket, HeartHandshake, Popcorn 
-} from 'lucide-react'; // Added Popcorn and more icons for flexibility
+// Import Info specifically for fallback, and all icons under LucideIcons namespace
+import { Info, Loader2 } from 'lucide-react'; 
+import * as LucideIcons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
@@ -25,24 +26,7 @@ import {
 
 const IS_DEV_SKIP_LOGIN = false;
 
-// Client-side map from icon name string to Lucide component
-const lucideIconComponentsMap: { [key: string]: LucideIcon } = {
-  Info,
-  Utensils,
-  Soup,
-  GlassWater,
-  Droplet,
-  Flame,
-  Snowflake,
-  Blend,
-  UtensilsCrossed,
-  Layers,
-  ConciergeBell,
-  PackageSearch, 
-  ShoppingBasket,
-  HeartHandshake,
-  Popcorn, // Added Popcorn
-};
+// lucideIconComponentsMap is removed as we'll use dynamic lookup via LucideIcons namespace
 
 
 export default function TablePage() {
@@ -53,7 +37,6 @@ export default function TablePage() {
     isAuthenticated,
     tableId: authTableId,
     billId: authBillId,
-    // login, // Assuming login is from AuthContext after NextAuth removal or for custom logic - Now using NextAuth signIn
     logout,
     currentBillPaymentStatus,
     isLoadingBillStatus
@@ -66,7 +49,6 @@ export default function TablePage() {
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
 
   const [menuItems, setMenuItems] = useState<MenuItemType[]>([]);
-  // fetchedCategories now expects {name: string, iconName: string}
   const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
   const [isMenuLoading, setIsMenuLoading] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
@@ -97,8 +79,7 @@ export default function TablePage() {
           const internalLoginData = await internalLoginResponse.json();
 
           if (internalLoginResponse.ok && internalLoginData.success && internalLoginData.billId) {
-            // For dev mode, directly use next-auth's signIn after internal API success
-            const { signIn } = await import('next-auth/react'); // Dynamically import for cleaner dev block
+            const { signIn } = await import('next-auth/react'); 
             const signInResult = await signIn('credentials', {
               redirect: false,
               phoneNumber: mockPhoneNumber,
@@ -109,10 +90,9 @@ export default function TablePage() {
               console.error("Dev auto-login (NextAuth signIn) failed:", signInResult.error);
               setShowLogin(true);
             }
-            // onLoginSuccess behavior is implicitly handled by useEffect watching isAuthenticated
           } else {
             console.error("Dev auto-login (internal API) failed:", internalLoginData.error || `Status: ${internalLoginResponse.status}`);
-            setShowLogin(true); // Fallback to showing login
+            setShowLogin(true); 
           }
         } catch (error) {
           console.error("Dev auto-login API call error:", error);
@@ -158,7 +138,7 @@ export default function TablePage() {
           }
           const data = await response.json();
           setMenuItems(data.menuItems || []);
-          setFetchedCategories(data.categories || []); // data.categories is now [{name, iconName}, ...]
+          setFetchedCategories(data.categories || []); 
         } catch (error: any) {
           setMenuError(error.message || 'Could not load menu.');
           setMenuItems([]);
@@ -187,9 +167,11 @@ export default function TablePage() {
 
   const categoryDetails = useMemo(() => {
     return fetchedCategories
-      .map(cat => { // cat is {name: string, iconName: string}
+      .map(cat => { 
         const itemsInCategory = menuItems.filter(item => item.category === cat.name);
-        const IconComponent = lucideIconComponentsMap[cat.iconName] || lucideIconComponentsMap.Info || Info; // Ensure Info is a final fallback
+        // Dynamically get icon component from LucideIcons namespace
+        // Fallback to Info icon if the specific icon isn't found in LucideIcons
+        const IconComponent = LucideIcons[cat.iconName as keyof typeof LucideIcons] || Info;
         
         let imageUrl = 'https://placehold.co/320x180.png';
         let dataAiHint = 'food category'; 
@@ -197,7 +179,7 @@ export default function TablePage() {
         if (cat.name === 'Starters') { dataAiHint = 'appetizers selection'; }
         else if (cat.name === 'Mains') { dataAiHint = 'hearty meals'; }
         else if (cat.name === 'Drinks') { dataAiHint = 'refreshing beverages'; }
-        else if (cat.iconName === 'Popcorn') { dataAiHint = 'snacks popcorn';} // Example if API returns "Popcorn" for a category
+        else if (cat.iconName === 'Popcorn') { dataAiHint = 'snacks popcorn';} 
         
         return { 
           name: cat.name, 
@@ -308,7 +290,7 @@ export default function TablePage() {
         selectedCategory={selectedCategory}
         displayedItems={displayedItems}
         categoryDetails={categoryDetails} 
-        categoryIcons={lucideIconComponentsMap} 
+        categoryIcons={LucideIcons} // Pass the entire LucideIcons namespace
         onCategorySelect={handleCategorySelect}
         onClearSearch={clearSelectionAndSearch}
         setSearchTerm={setSearchTerm}
