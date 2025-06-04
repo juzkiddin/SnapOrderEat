@@ -10,13 +10,20 @@ import type { MenuItemType } from '@/types';
 const EXTERNAL_CATEGORIES_API_URL = 'https://catalogue.snapordereat.in/catalouge/categories';
 
 async function fetchCategoriesFromExternalAPI(): Promise<string[] | null> {
+  const restaurantId = process.env.RESTAURANT_ID;
+
+  if (!restaurantId) {
+    console.warn('RESTAURANT_ID environment variable is not set. Cannot fetch external categories.');
+    return null;
+  }
+
   try {
     const response = await fetch(EXTERNAL_CATEGORIES_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ restaurantId: "tastyspoon" }),
+      body: JSON.stringify({ restaurantId: restaurantId }),
     });
 
     if (!response.ok) {
@@ -48,7 +55,7 @@ export async function GET() {
       console.log('Using categories from external API:', activeCategoryOrder);
     } else {
       activeCategoryOrder = localCategoryOrder;
-      console.warn('Failed to fetch categories from external API, using local fallback:', activeCategoryOrder);
+      console.warn('Failed to fetch categories from external API or RESTAURANT_ID not set, using local fallback:', activeCategoryOrder);
     }
 
     // Prepare category data to send to client.
