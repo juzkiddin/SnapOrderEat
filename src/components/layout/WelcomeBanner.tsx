@@ -10,13 +10,16 @@ interface WelcomeBannerProps {
 export default function WelcomeBanner({ showWelcomeMessage }: WelcomeBannerProps) {
   return (
     <div
-      className={`transition-all duration-700 ease-in-out ${
-        showWelcomeMessage
-          ? `opacity-100 ${WELCOME_MESSAGE_VISIBLE_HEIGHT} mb-4`
-          : 'opacity-0 h-0 overflow-hidden mb-0'
+      // Apply height and margin consistently. Transition only opacity.
+      // WELCOME_MESSAGE_VISIBLE_HEIGHT already includes 'h-[...]'
+      className={`${WELCOME_MESSAGE_VISIBLE_HEIGHT} mb-4 transition-opacity duration-700 ease-in-out ${
+        showWelcomeMessage ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
+      // Add aria-hidden when not visible for accessibility
+      aria-hidden={!showWelcomeMessage}
     >
-      <section className={`text-center ${showWelcomeMessage ? 'py-3' : 'py-0'}`}>
+      {/* Inner content can be simplified as its visibility is controlled by parent's opacity */}
+      <section className="text-center py-3">
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
           Welcome to <span className="text-primary">The Tasty Spoon</span>
         </h1>
