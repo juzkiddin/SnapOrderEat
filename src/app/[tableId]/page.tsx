@@ -11,7 +11,7 @@ import SpecialRequestDialog from '@/components/menu/SpecialRequestDialog';
 import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
 
 import type { MenuItemType } from '@/types';
-import { Info, Loader2, Popcorn } from 'lucide-react'; 
+import { Info, Loader2, Popcorn, AlertTriangle } from 'lucide-react'; 
 import * as LucideIcons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -46,17 +46,20 @@ export default function TablePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
 
-  // Holds the initial sample menu or items for a selected category
   const [menuItems, setMenuItems] = useState<MenuItemType[]>([]);
-  // Holds only the initial sample menu loaded from /api/menu, used for global search or reset
   const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]);
 
   const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
-  const [isMenuLoading, setIsMenuLoading] = useState(true); // Combined loading state for initial menu and category items
+  const [isMenuLoading, setIsMenuLoading] = useState(true); 
   const [menuError, setMenuError] = useState<string | null>(null);
 
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
   const [isDevLoggingIn, setIsDevLoggingIn] = useState(false);
+
+  // New states for server-side session bill validation
+  const [isServerSessionValidating, setIsServerSessionValidating] = useState(false);
+  const [serverSessionValidationError, setServerSessionValidationError] = useState<string | null>(null);
+
 
   const cartItemCount = getItemCount();
   const cartTotal = getCartTotal();
@@ -110,49 +113,86 @@ export default function TablePage() {
   }, [IS_DEV_SKIP_LOGIN, tableIdFromUrl, isAuthenticated, authTableId, isDevLoggingIn]);
 
 
+  // Main effect to determine if login screen or menu (after validation) should be shown
   useEffect(() => {
-    if (isAuthenticated && authTableId === tableIdFromUrl) {
+    if (isAuthenticated && authTableId === tableIdFromUrl && authBillId) {
+      // User is authenticated for this table and has a billId
+      setServerSessionValidationError(null); // Clear previous validation errors
+
       if (!isLoadingBillStatus && currentBillPaymentStatus === 'Completed') {
         console.log("[Auth] Bill completed, logging out.");
         logout();
         setShowLogin(true);
-      } else if (!isLoadingBillStatus) {
-        setShowLogin(false);
+      } else if (!isLoadingBillStatus) { // Bill status is loaded and not 'Completed'
+        // Ready to validate the session bill ID with the server
+        const validateAndProceed = async () => {
+          setIsServerSessionValidating(true);
+          console.log(`[SessionValidate] Validating session bill ${authBillId} against server store.`);
+          try {
+            const response = await fetch(`/api/bills/${authBillId}/validate`);
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Validation API call failed: ${response.status} - ${errorText}`);
+            }
+            const data = await response.json();
+            if (data.isValid) {
+              console.log(`[SessionValidate] Bill ${authBillId} is valid. Proceeding to menu.`);
+              setShowLogin(false); // Bill is valid, allow menu display
+            } else {
+              console.warn(`[SessionValidate] Bill ${authBillId} NOT found or invalid in server store. Logging out.`);
+              setServerSessionValidationError("Your session is no longer active or valid. Please log in again.");
+              logout(); 
+              setShowLogin(true);
+            }
+          } catch (error: any) {
+            console.error("[SessionValidate] Error validating session bill:", error);
+            setServerSessionValidationError("Could not verify your session with the server. Please log in again.");
+            logout();
+            setShowLogin(true);
+          } finally {
+            setIsServerSessionValidating(false);
+          }
+        };
+        validateAndProceed();
       }
-    } else {
+      // If isLoadingBillStatus is true, we wait for it to resolve, this effect will re-run.
+    } else { // Not authenticated, or tableId mismatch, or authBillId missing
       setShowLogin(true);
+      setServerSessionValidationError(null); // Clear validation error if navigating away/logging out
     }
   }, [
     isAuthenticated,
     authTableId,
     tableIdFromUrl,
+    authBillId,
     logout,
     currentBillPaymentStatus,
-    isLoadingBillStatus
+    isLoadingBillStatus,
   ]);
 
-  // Effect for initial menu (categories + sample items) load
+
+  // Effect for initial menu (categories + sample items) load OR if showLogin becomes false after validation
   useEffect(() => {
-    if (!showLogin) {
+    if (!showLogin && !isServerSessionValidating) { // Only fetch if login is hidden and not currently validating
       const fetchInitialMenu = async () => {
         console.log("[PageLoad] Fetching initial menu (categories and sample items)...");
         setIsMenuLoading(true);
         setMenuError(null);
         try {
-          const response = await fetch('/api/menu', { cache: 'no-store' }); // Ensure categories are fresh too
+          const response = await fetch('/api/menu', { cache: 'no-store' }); 
           if (!response.ok) {
             throw new Error(`Failed to fetch initial menu: ${response.statusText}`);
           }
           const data = await response.json();
           console.log("[PageLoad] Initial menu data received:", data);
-          const sampleItems = data.menuItems || localSampleMenuData; // Fallback to local if API doesn't send items
+          const sampleItems = data.menuItems || localSampleMenuData; 
           setInitialSampleMenuItems(sampleItems);
-          setMenuItems(sampleItems); // Initially, menuItems are the sample items
+          setMenuItems(sampleItems); 
           setFetchedCategories(data.categories || []); 
         } catch (error: any) {
           console.error("[PageLoad] Error fetching initial menu:", error.message);
           setMenuError(error.message || 'Could not load initial menu.');
-          setInitialSampleMenuItems(localSampleMenuData); // Fallback on error
+          setInitialSampleMenuItems(localSampleMenuData); 
           setMenuItems(localSampleMenuData);
           setFetchedCategories([]);
         } finally {
@@ -161,7 +201,7 @@ export default function TablePage() {
       };
       fetchInitialMenu();
     }
-  }, [showLogin]);
+  }, [showLogin, isServerSessionValidating]); // Depends on showLogin and isServerSessionValidating
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -171,7 +211,7 @@ export default function TablePage() {
         setShowWelcomeMessage(false);
       }, 1500);
     } else {
-      setShowWelcomeMessage(true);
+      setShowWelcomeMessage(true); // Keep welcome message area "open" if login is shown
     }
     return () => clearTimeout(timer);
   }, [showLogin]);
@@ -180,7 +220,6 @@ export default function TablePage() {
   const categoryDetails = useMemo(() => {
     return fetchedCategories
       .map(cat => { 
-        // Item count is based on initial sample menu for category cards, not dynamic items
         const itemsInCategory = initialSampleMenuItems.filter(item => item.category === cat.name);
         const IconComponent = LucideIcons[cat.iconName as keyof typeof LucideIcons] || Info;
         
@@ -200,25 +239,21 @@ export default function TablePage() {
           dataAiHint 
         };
       })
-      .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name)); // Show category even if 0 sample items, if API listed it
+      .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name)); 
   }, [initialSampleMenuItems, fetchedCategories]);
 
 
   const displayedItems = useMemo(() => {
-    // menuItems state now correctly holds either global sample data or category-specific API data
     let itemsToDisplay = menuItems; 
     if (searchTerm) {
       itemsToDisplay = itemsToDisplay.filter(item =>
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
       );
-      // If a category is selected, search should already be within its items.
-      // This additional filter ensures it, though menuItems should already be scoped.
       if (selectedCategory) { 
         itemsToDisplay = itemsToDisplay.filter(item => item.category === selectedCategory);
       }
     }
-    // console.log(`[DisplayedItems] For search '${searchTerm}' in category '${selectedCategory || 'All'}', showing ${itemsToDisplay.length} items.`);
     return itemsToDisplay;
   }, [searchTerm, selectedCategory, menuItems]);
 
@@ -231,22 +266,22 @@ export default function TablePage() {
     console.log("[Selection] Clearing category selection and search. Resetting to initial sample menu items.");
     setSelectedCategory(null);
     setSearchTerm("");
-    setMenuItems(initialSampleMenuItems); // Reset to show all sample items
-    setMenuError(null); // Clear any previous category-specific errors
+    setMenuItems(initialSampleMenuItems); 
+    setMenuError(null); 
   }, [initialSampleMenuItems]);
 
   const handleCategorySelect = useCallback(async (categoryName: string) => {
     console.log(`[CategorySelect] Category selected: ${categoryName}. Fetching items...`);
     setSelectedCategory(categoryName);
     setSearchTerm(""); 
-    setIsMenuLoading(true);
+    setIsMenuLoading(true); // Use general menu loading state
     setMenuError(null);
     try {
       const response = await fetch('/api/menu/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ categoryName }),
-        cache: 'no-store', // Ensure fresh data from our API endpoint
+        cache: 'no-store', 
       });
       console.log(`[CategorySelect] Response status from /api/menu/items for ${categoryName}: ${response.status}`);
 
@@ -256,13 +291,13 @@ export default function TablePage() {
         throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
       }
       const data: MenuItemType[] = await response.json();
-      console.log(`[CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3)); // Log first 3 items
+      console.log(`[CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3)); 
       setMenuItems(data);
       console.log(`[CategorySelect] menuItems state updated with ${data.length} items from API for ${categoryName}.`);
     } catch (error: any) {
       console.error(`[CategorySelect] Catch block error for ${categoryName}:`, error.message);
       setMenuError(error.message);
-      setMenuItems([]); // Clear items on error
+      setMenuItems([]); 
     } finally {
       setIsMenuLoading(false);
     }
@@ -282,20 +317,37 @@ export default function TablePage() {
     );
   }
   
-  if (isDevLoggingIn || (isAuthenticated && isLoadingBillStatus && !showLogin)) {
+  // Combined loading states
+  if ( isDevLoggingIn || 
+      (isAuthenticated && authBillId && (isLoadingBillStatus || isServerSessionValidating))
+     ) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
-        <p className="text-xl text-muted-foreground">Verifying session...</p>
+        <p className="text-xl text-muted-foreground">
+          {isDevLoggingIn ? "Developer auto-login in progress..." :
+           isServerSessionValidating ? "Verifying session with server..." : 
+           "Verifying session..."}
+        </p>
       </div>
     );
   }
 
   if (showLogin) {
-    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* State change handled by useEffect watching session */ }} />;
+    return (
+      <>
+        {serverSessionValidationError && (
+          <div className="p-4 mb-4 text-sm text-destructive-foreground bg-destructive rounded-md flex items-center gap-2 max-w-md mx-auto">
+            <AlertTriangle className="h-5 w-5" />
+            <span>{serverSessionValidationError}</span>
+          </div>
+        )}
+        <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* State change handled by useEffect watching session */ }} />
+      </>
+    );
   }
 
-  // This loading state now covers initial menu load AND category-specific item load
+  // Menu loading state (after login and validation)
   if (isMenuLoading) {
     const loadingMessage = selectedCategory 
       ? `Loading items for ${selectedCategory}...` 
@@ -308,7 +360,7 @@ export default function TablePage() {
     );
   }
 
-  // This error state can be for initial menu load OR category-specific item load
+  // Menu error state (after login and validation)
   if (menuError) {
     const errorMessage = selectedCategory
       ? `Error loading items for ${selectedCategory}: ${menuError}`
@@ -354,8 +406,8 @@ export default function TablePage() {
         categoryDetails={categoryDetails} 
         categoryIcons={LucideIcons} 
         onCategorySelect={handleCategorySelect}
-        onClearSearch={clearSelectionAndSearch} // Used when "Clear Search" in global search results
-        setSearchTerm={setSearchTerm} // Used when "Clear search in category"
+        onClearSearch={clearSelectionAndSearch} 
+        setSearchTerm={setSearchTerm} 
       />
 
       <PageFloatingButtons
@@ -375,4 +427,3 @@ export default function TablePage() {
     </div>
   );
 }
-
