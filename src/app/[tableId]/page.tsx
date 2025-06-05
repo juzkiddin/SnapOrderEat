@@ -11,8 +11,7 @@ import SpecialRequestDialog from '@/components/menu/SpecialRequestDialog';
 import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
 
 import type { MenuItemType } from '@/types';
-// Import Info specifically for fallback, and all icons under LucideIcons namespace
-import { Info, Loader2 } from 'lucide-react'; 
+import { Info, Loader2, Popcorn } from 'lucide-react'; 
 import * as LucideIcons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -22,11 +21,10 @@ import { useCart } from '@/contexts/CartContext';
 import {
   WELCOME_MESSAGE_VISIBLE_HEIGHT,
   MOCKED_WAITER_OTP,
+  sampleMenuData as localSampleMenuData, // Use a distinct name for local fallback
 } from '@/lib/dataValues';
 
 const IS_DEV_SKIP_LOGIN = false;
-
-// lucideIconComponentsMap is removed as we'll use dynamic lookup via LucideIcons namespace
 
 
 export default function TablePage() {
@@ -48,9 +46,13 @@ export default function TablePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
 
+  // Holds the initial sample menu or items for a selected category
   const [menuItems, setMenuItems] = useState<MenuItemType[]>([]);
+  // Holds only the initial sample menu loaded from /api/menu, used for global search or reset
+  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]);
+
   const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
-  const [isMenuLoading, setIsMenuLoading] = useState(true);
+  const [isMenuLoading, setIsMenuLoading] = useState(true); // Combined loading state for initial menu and category items
   const [menuError, setMenuError] = useState<string | null>(null);
 
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
@@ -61,7 +63,7 @@ export default function TablePage() {
 
   useEffect(() => {
     if (IS_DEV_SKIP_LOGIN && tableIdFromUrl && !(isAuthenticated && authTableId === tableIdFromUrl) && !isDevLoggingIn) {
-      console.log(`DEV MODE: Auto-logging in via API for table ${tableIdFromUrl}`);
+      console.log(`[DEV MODE] Auto-logging in via API for table ${tableIdFromUrl}`);
       setIsDevLoggingIn(true);
       const mockPhoneNumber = "+910000000000"; 
 
@@ -87,15 +89,17 @@ export default function TablePage() {
               billId: internalLoginData.billId,
             });
             if (signInResult?.error) {
-              console.error("Dev auto-login (NextAuth signIn) failed:", signInResult.error);
+              console.error("[DEV MODE] Auto-login (NextAuth signIn) failed:", signInResult.error);
               setShowLogin(true);
+            } else {
+              console.log("[DEV MODE] Auto-login via NextAuth signIn successful.");
             }
           } else {
-            console.error("Dev auto-login (internal API) failed:", internalLoginData.error || `Status: ${internalLoginResponse.status}`);
+            console.error("[DEV MODE] Auto-login (internal API) failed:", internalLoginData.error || `Status: ${internalLoginResponse.status}`);
             setShowLogin(true); 
           }
         } catch (error) {
-          console.error("Dev auto-login API call error:", error);
+          console.error("[DEV MODE] Auto-login API call error:", error);
           setShowLogin(true);
         } finally {
           setIsDevLoggingIn(false);
@@ -109,6 +113,7 @@ export default function TablePage() {
   useEffect(() => {
     if (isAuthenticated && authTableId === tableIdFromUrl) {
       if (!isLoadingBillStatus && currentBillPaymentStatus === 'Completed') {
+        console.log("[Auth] Bill completed, logging out.");
         logout();
         setShowLogin(true);
       } else if (!isLoadingBillStatus) {
@@ -126,28 +131,35 @@ export default function TablePage() {
     isLoadingBillStatus
   ]);
 
+  // Effect for initial menu (categories + sample items) load
   useEffect(() => {
     if (!showLogin) {
-      const fetchMenu = async () => {
+      const fetchInitialMenu = async () => {
+        console.log("[PageLoad] Fetching initial menu (categories and sample items)...");
         setIsMenuLoading(true);
         setMenuError(null);
         try {
-          const response = await fetch('/api/menu');
+          const response = await fetch('/api/menu', { cache: 'no-store' }); // Ensure categories are fresh too
           if (!response.ok) {
-            throw new Error(`Failed to fetch menu: ${response.statusText}`);
+            throw new Error(`Failed to fetch initial menu: ${response.statusText}`);
           }
           const data = await response.json();
-          setMenuItems(data.menuItems || []);
+          console.log("[PageLoad] Initial menu data received:", data);
+          const sampleItems = data.menuItems || localSampleMenuData; // Fallback to local if API doesn't send items
+          setInitialSampleMenuItems(sampleItems);
+          setMenuItems(sampleItems); // Initially, menuItems are the sample items
           setFetchedCategories(data.categories || []); 
         } catch (error: any) {
-          setMenuError(error.message || 'Could not load menu.');
-          setMenuItems([]);
+          console.error("[PageLoad] Error fetching initial menu:", error.message);
+          setMenuError(error.message || 'Could not load initial menu.');
+          setInitialSampleMenuItems(localSampleMenuData); // Fallback on error
+          setMenuItems(localSampleMenuData);
           setFetchedCategories([]);
         } finally {
           setIsMenuLoading(false);
         }
       };
-      fetchMenu();
+      fetchInitialMenu();
     }
   }, [showLogin]);
 
@@ -168,9 +180,8 @@ export default function TablePage() {
   const categoryDetails = useMemo(() => {
     return fetchedCategories
       .map(cat => { 
-        const itemsInCategory = menuItems.filter(item => item.category === cat.name);
-        // Dynamically get icon component from LucideIcons namespace
-        // Fallback to Info icon if the specific icon isn't found in LucideIcons
+        // Item count is based on initial sample menu for category cards, not dynamic items
+        const itemsInCategory = initialSampleMenuItems.filter(item => item.category === cat.name);
         const IconComponent = LucideIcons[cat.iconName as keyof typeof LucideIcons] || Info;
         
         let imageUrl = 'https://placehold.co/320x180.png';
@@ -189,24 +200,25 @@ export default function TablePage() {
           dataAiHint 
         };
       })
-      .filter(cat => cat.itemCount > 0);
-  }, [menuItems, fetchedCategories]);
+      .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name)); // Show category even if 0 sample items, if API listed it
+  }, [initialSampleMenuItems, fetchedCategories]);
 
 
   const displayedItems = useMemo(() => {
-    let itemsToDisplay = menuItems;
-    if (selectedCategory && !searchTerm) {
-      itemsToDisplay = itemsToDisplay.filter(item => item.category === selectedCategory);
-    }
+    // menuItems state now correctly holds either global sample data or category-specific API data
+    let itemsToDisplay = menuItems; 
     if (searchTerm) {
       itemsToDisplay = itemsToDisplay.filter(item =>
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
       );
-      if (selectedCategory) {
+      // If a category is selected, search should already be within its items.
+      // This additional filter ensures it, though menuItems should already be scoped.
+      if (selectedCategory) { 
         itemsToDisplay = itemsToDisplay.filter(item => item.category === selectedCategory);
       }
     }
+    // console.log(`[DisplayedItems] For search '${searchTerm}' in category '${selectedCategory || 'All'}', showing ${itemsToDisplay.length} items.`);
     return itemsToDisplay;
   }, [searchTerm, selectedCategory, menuItems]);
 
@@ -216,14 +228,45 @@ export default function TablePage() {
   };
 
   const clearSelectionAndSearch = useCallback(() => {
+    console.log("[Selection] Clearing category selection and search. Resetting to initial sample menu items.");
     setSelectedCategory(null);
     setSearchTerm("");
-  }, []);
+    setMenuItems(initialSampleMenuItems); // Reset to show all sample items
+    setMenuError(null); // Clear any previous category-specific errors
+  }, [initialSampleMenuItems]);
 
-  const handleCategorySelect = (categoryName: string) => {
+  const handleCategorySelect = useCallback(async (categoryName: string) => {
+    console.log(`[CategorySelect] Category selected: ${categoryName}. Fetching items...`);
     setSelectedCategory(categoryName);
     setSearchTerm(""); 
-  };
+    setIsMenuLoading(true);
+    setMenuError(null);
+    try {
+      const response = await fetch('/api/menu/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoryName }),
+        cache: 'no-store', // Ensure fresh data from our API endpoint
+      });
+      console.log(`[CategorySelect] Response status from /api/menu/items for ${categoryName}: ${response.status}`);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `Failed to fetch items for ${categoryName}. Status: ${response.status}` }));
+        console.error(`[CategorySelect] Error fetching items for ${categoryName}:`, errorData.error || response.statusText);
+        throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
+      }
+      const data: MenuItemType[] = await response.json();
+      console.log(`[CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3)); // Log first 3 items
+      setMenuItems(data);
+      console.log(`[CategorySelect] menuItems state updated with ${data.length} items from API for ${categoryName}.`);
+    } catch (error: any) {
+      console.error(`[CategorySelect] Catch block error for ${categoryName}:`, error.message);
+      setMenuError(error.message);
+      setMenuItems([]); // Clear items on error
+    } finally {
+      setIsMenuLoading(false);
+    }
+  }, []);
 
   const openSpecialRequestDialog = () => {
     setIsSpecialRequestDialogOpen(true);
@@ -252,24 +295,43 @@ export default function TablePage() {
     return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* State change handled by useEffect watching session */ }} />;
   }
 
+  // This loading state now covers initial menu load AND category-specific item load
   if (isMenuLoading) {
+    const loadingMessage = selectedCategory 
+      ? `Loading items for ${selectedCategory}...` 
+      : "Loading menu...";
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
-        <p className="text-xl text-muted-foreground">Loading menu...</p>
+        <p className="text-xl text-muted-foreground">{loadingMessage}</p>
       </div>
     );
   }
 
+  // This error state can be for initial menu load OR category-specific item load
   if (menuError) {
+    const errorMessage = selectedCategory
+      ? `Error loading items for ${selectedCategory}: ${menuError}`
+      : `Error Loading Menu: ${menuError}`;
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <Info className="h-16 w-16 text-destructive mb-4" />
-        <h1 className="text-2xl font-semibold mb-2">Error Loading Menu</h1>
+        <h1 className="text-2xl font-semibold mb-2">{selectedCategory ? "Error Loading Items" : "Error Loading Menu"}</h1>
         <p className="text-muted-foreground">{menuError}</p>
-        <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">
+        <button 
+          onClick={() => selectedCategory ? handleCategorySelect(selectedCategory) : window.location.reload()} 
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
+        >
             Try Again
         </button>
+        {selectedCategory && (
+          <button 
+            onClick={clearSelectionAndSearch}
+            className="mt-2 px-4 py-2 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90"
+          >
+            Back to Categories
+          </button>
+        )}
       </div>
     );
   }
@@ -290,10 +352,10 @@ export default function TablePage() {
         selectedCategory={selectedCategory}
         displayedItems={displayedItems}
         categoryDetails={categoryDetails} 
-        categoryIcons={LucideIcons} // Pass the entire LucideIcons namespace
+        categoryIcons={LucideIcons} 
         onCategorySelect={handleCategorySelect}
-        onClearSearch={clearSelectionAndSearch}
-        setSearchTerm={setSearchTerm}
+        onClearSearch={clearSelectionAndSearch} // Used when "Clear Search" in global search results
+        setSearchTerm={setSearchTerm} // Used when "Clear search in category"
       />
 
       <PageFloatingButtons
@@ -313,3 +375,4 @@ export default function TablePage() {
     </div>
   );
 }
+
