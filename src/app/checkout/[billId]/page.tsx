@@ -10,6 +10,7 @@ import { CreditCard, Printer, Smartphone, ArrowLeft, AlertCircle, Loader2 } from
 import { useEffect, useState, useCallback } from 'react';
 import type { OrderType } from '@/types';
 import Script from 'next/script';
+import { useToast } from '@/hooks/use-toast';
 
 declare global {
   interface Window {
@@ -30,6 +31,7 @@ export default function CheckoutPage() {
     fetchAndSetBillStatus,
     setPaymentStatusForBill 
   } = useAuth();
+  const { toast } = useToast();
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isRazorpayScriptLoaded, setIsRazorpayScriptLoaded] = useState(false);
@@ -104,18 +106,27 @@ export default function CheckoutPage() {
 
   const handleRequestBill = async () => {
     if (billIdFromUrl) {
-        await setPaymentStatusForBill(billIdFromUrl, 'Pending'); // Ensure server status is 'Pending'
+      try {
+        await setPaymentStatusForBill(billIdFromUrl, 'Pending'); 
         router.push(`/bill-status/${billIdFromUrl}`);
+      } catch (error: any) {
+        console.error("CheckoutPage: Failed to request bill:", error);
+        toast({
+          title: "Error Requesting Bill",
+          description: error.message || "Could not update bill status. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
   const handleMakePaymentOnline = async () => {
     if (!isRazorpayScriptLoaded || billTotal === null || billTotal <= 0) {
-      alert("Razorpay script not loaded or bill amount invalid.");
+      toast({ title: "Payment Error", description: "Payment gateway not ready or bill amount invalid.", variant: "destructive" });
       return;
     }
     if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
-      alert("Razorpay Key ID is not configured. Please contact support.");
+      toast({ title: "Configuration Error", description: "Online payment is not configured. Please contact support.", variant: "destructive" });
       console.error("NEXT_PUBLIC_RAZORPAY_KEY_ID is not set in environment variables.");
       return;
     }
@@ -123,11 +134,10 @@ export default function CheckoutPage() {
     setIsProcessingPayment(true);
 
     try {
-      // Step 1: Create an order on your backend which then creates an order on Razorpay
       const createOrderResponse = await fetch('/api/payment/razorpay/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billId: billIdFromUrl, amount: billTotal }), // Sending amount in rupees
+        body: JSON.stringify({ billId: billIdFromUrl, amount: billTotal }),
       });
 
       if (!createOrderResponse.ok) {
@@ -140,24 +150,24 @@ export default function CheckoutPage() {
       if (!orderData.success || !orderData.order_id) {
         throw new Error(orderData.error || "Backend did not return a valid Razorpay order ID.");
       }
-      const razorpayOrderId = orderData.order_id; // This is Razorpay's order_id
-      const razorpayOrderAmount = orderData.amount; // Amount in paise from API
+      const razorpayOrderId = orderData.order_id; 
+      const razorpayOrderAmount = orderData.amount;
 
       const options = {
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: razorpayOrderAmount.toString(), // Amount in paise from our create-order API
+        amount: razorpayOrderAmount.toString(), 
         currency: orderData.currency || "INR",
         name: "SnapOrderEat",
         description: `Bill Payment for: ${billIdFromUrl}`,
         order_id: razorpayOrderId,
         handler: async function (response: any) {
-          setIsProcessingPayment(true); // Keep loading state during verification
+          setIsProcessingPayment(true); 
           try {
             const verificationData = {
               razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_order_id: response.razorpay_order_id, // This is Razorpay's order ID
+              razorpay_order_id: response.razorpay_order_id, 
               razorpay_signature: response.razorpay_signature,
-              original_bill_id: billIdFromUrl, // Your application's bill ID
+              original_bill_id: billIdFromUrl, 
             };
 
             const verifyResponse = await fetch('/api/payment/razorpay/verify-payment', {
@@ -169,35 +179,31 @@ export default function CheckoutPage() {
             const verificationResult = await verifyResponse.json();
 
             if (verificationResult.isOk) {
-              alert(`Payment Successful! Payment ID: ${response.razorpay_payment_id}. ${verificationResult.message || ''}`);
-              await fetchAndSetBillStatus(billIdFromUrl); // Refresh bill status from server
+              toast({ title: "Payment Successful!", description: `Payment ID: ${response.razorpay_payment_id}. ${verificationResult.message || ''}` });
+              await fetchAndSetBillStatus(billIdFromUrl); 
               router.push(`/bill-status/${billIdFromUrl}`);
             } else {
-              alert(`Payment Verification Failed: ${verificationResult.message || 'Unknown error'}`);
+              toast({ title: "Payment Verification Failed", description: verificationResult.message || 'Unknown error', variant: "destructive" });
             }
           } catch (verifyError: any) {
             console.error("Payment verification API error:", verifyError);
-            alert(`Payment Verification Error: ${verifyError.message}`);
+            toast({ title: "Payment Verification Error", description: verifyError.message, variant: "destructive" });
           } finally {
             setIsProcessingPayment(false);
           }
         },
-        prefill: {
-            // name: "Customer Name", // Optional
-            // email: "customer@example.com", // Optional
-            // contact: "9999999999" // Optional
-        },
+        prefill: {},
         notes: {
             snap_order_eat_bill_id: billIdFromUrl,
             snap_order_eat_table_id: tableId || "N/A",
         },
         theme: {
-            color: "#7C8363" // Your primary color from globals.css
+            color: "#7C8363" 
         }
       };
       
       if (!window.Razorpay) {
-        alert("Razorpay SDK not loaded. Please try again.");
+        toast({ title: "Payment Error", description: "Payment gateway SDK not loaded. Please try again.", variant: "destructive" });
         setIsProcessingPayment(false);
         return;
       }
@@ -205,15 +211,14 @@ export default function CheckoutPage() {
       const rzp = new window.Razorpay(options);
       rzp.on('payment.failed', function (response: any){
           console.error("Razorpay payment failed:", response.error);
-          alert(`Payment Failed: ${response.error.reason || response.error.description || 'Unknown Razorpay Error'}`);
+          toast({ title: "Payment Failed", description: `Error: ${response.error.reason || response.error.description || 'Unknown Razorpay Error'}`, variant: "destructive" });
           setIsProcessingPayment(false);
       });
       rzp.open();
-      // Note: setIsProcessingPayment(false) is called in handler or payment.failed
 
     } catch (error: any) {
       console.error("Error initiating Razorpay payment:", error);
-      alert(`Error: ${error.message}`);
+      toast({ title: "Payment Initiation Error", description: error.message, variant: "destructive" });
       setIsProcessingPayment(false);
     }
   };
@@ -227,7 +232,7 @@ export default function CheckoutPage() {
     );
   }
 
-  if (!billIdFromUrl) { // Should be caught earlier, but good to have
+  if (!billIdFromUrl) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <AlertCircle className="h-16 w-16 text-destructive mb-4" />
@@ -264,7 +269,7 @@ export default function CheckoutPage() {
         }}
         onError={(e) => {
           console.error("Failed to load Razorpay script:", e);
-          alert("Could not load payment gateway. Please try refreshing the page.");
+          toast({ title: "Payment Gateway Error", description: "Could not load payment gateway. Please try refreshing the page.", variant: "destructive" });
         }}
       />
       <div className="max-w-md mx-auto py-8 sm:py-12">

@@ -87,7 +87,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }));
           return;
         }
-        throw new Error(`Failed to fetch bill status: ${response.statusText}`);
+        let errorMsg = `Failed to fetch bill status. HTTP Status: ${response.status}.`;
+        try {
+          const errorData = await response.json();
+          errorMsg += ` Server Message: ${errorData.error || errorData.message || JSON.stringify(errorData)}.`;
+        } catch (e) {
+          errorMsg += ` Status Text: ${response.statusText || 'N/A'}. (Response not JSON or empty).`;
+        }
+        throw new Error(errorMsg);
       }
       const data = await response.json();
       setAuthState(prevState => ({
@@ -108,15 +115,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = useCallback(async () => {
     await nextAuthSignOut({ redirect: false }); // Perform NextAuth sign out
     // State update for AuthContext will be handled by the useEffect watching sessionStatus
-    // No need to manually setAuthState to initialState here.
-    // router.push('/') could be called here if a redirect is always desired post-logout
   }, []);
 
   const setPaymentStatusForBill = useCallback(async (billIdToUpdate: string, status: PaymentStatus) => {
-    // Ensure this only happens if the billIdToUpdate matches the one in session, or handle accordingly.
     if (billIdFromSession !== billIdToUpdate) {
-        console.warn("Attempting to update status for a bill not in current session.");
-        // return; // Or allow if admin/different logic
+        console.warn("Attempting to update status for a bill not in current session. This might be an issue or intended for admin-like actions.");
     }
     try {
       const response = await fetch(`/api/bills/${billIdToUpdate}/status`, {
@@ -124,11 +127,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+
       if (!response.ok) {
-        throw new Error(`Failed to update bill status: ${response.statusText}`);
+        let errorMsg = `Failed to update bill status. HTTP Status: ${response.status}.`;
+        try {
+          const errorData = await response.json();
+          errorMsg += ` Server Message: ${errorData.error || errorData.message || JSON.stringify(errorData)}.`;
+        } catch (e) {
+          errorMsg += ` Status Text: ${response.statusText || 'N/A'}. (Response not JSON or empty).`;
+        }
+        throw new Error(errorMsg);
       }
+
       const data = await response.json();
-      // Only update context state if it's for the currently relevant bill
       if (billIdFromSession === billIdToUpdate) {
         setAuthState(prevState => ({
           ...prevState,
@@ -136,7 +147,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }));
       }
     } catch (error) {
-      console.error("Error setting bill status:", error);
+      console.error("AuthContext: Error setting bill status:", error); 
+      throw error; 
     }
   }, [billIdFromSession]);
 
