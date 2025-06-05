@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server';
 import { sampleMenuData, categoryOrder as localCategoryOrder, categoryIcons as localCategoryIconsMap } from '@/lib/dataValues';
 import type { MenuItemType } from '@/types';
 
-const EXTERNAL_CATEGORIES_API_URL = 'https://catalogue.snapordereat.in/catalouge/categories';
-const EXTERNAL_CATEGORY_ICONS_API_URL = 'https://catalogue.snapordereat.in/catalouge/categoryicons';
+const EXTERNAL_CATEGORIES_API_URL = 'https://catalogue.snapordereat.in/catalogue/categories';
+const EXTERNAL_CATEGORY_ICONS_API_URL = 'https://catalogue.snapordereat.in/catalogue/categoryicons';
 
 async function fetchCategoriesFromExternalAPI(): Promise<string[] | null> {
   const restaurantId = process.env.RESTAURANT_ID;
@@ -130,3 +130,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Internal Server Error fetching menu' }, { status: 500 });
   }
 }
+
