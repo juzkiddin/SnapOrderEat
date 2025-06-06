@@ -19,25 +19,23 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import {
   WELCOME_MESSAGE_VISIBLE_HEIGHT,
-  MOCKED_WAITER_OTP, // This is for DEV_SKIP_LOGIN, may not be needed with new external OTP
   sampleMenuData as localSampleMenuData,
 } from '@/lib/dataValues';
 
-const IS_DEV_SKIP_LOGIN = false; // Set to false as external OTP/Session API is primary
 
 export default function TablePage() {
   const params = useParams();
   const tableIdFromUrl = params.tableId as string;
 
   const {
-    isAuthenticated, // From NextAuth session via AuthContext
-    tableId: authTableId, // From NextAuth session
-    billId: authBillId, // From NextAuth session
-    sessionId: authSessionId, // From NextAuth session
-    currentPaymentStatus, // From NextAuth session, updated by AuthContext
+    isAuthenticated, 
+    tableId: authTableId, 
+    billId: authBillId, 
+    sessionId: authSessionId, 
+    currentPaymentStatus, 
     logout,
-    isAuthContextLoading, // Loading state from AuthContext (e.g. for /session/createsession)
-    externalSessionError, // Error from AuthContext (e.g. "Expired session")
+    isAuthContextLoading, 
+    externalSessionError, 
   } = useAuth();
   const { getItemCount, getCartTotal, setIsCartSheetOpen } = useCart();
 
@@ -46,64 +44,43 @@ export default function TablePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
 
-  const [menuItems, setMenuItems] = useState<MenuItemType[]>([]); // Holds current items for display
-  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]); // Fallback/initial
+  const [menuItems, setMenuItems] = useState<MenuItemType[]>([]); 
+  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]); 
 
   const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
   const [isMenuLoading, setIsMenuLoading] = useState(true); 
   const [menuError, setMenuError] = useState<string | null>(null);
 
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
-  // isDevLoggingIn state might be removable if DEV_SKIP_LOGIN is always false
-  const [isDevLoggingIn, setIsDevLoggingIn] = useState(false);
 
 
   const cartItemCount = getItemCount();
   const cartTotal = getCartTotal();
 
-  // Dev Skip Login - To be reviewed if still needed with external session API
-  useEffect(() => {
-    if (IS_DEV_SKIP_LOGIN && tableIdFromUrl && !isAuthenticated && !isDevLoggingIn) {
-      // This dev login flow would need significant rework to use the new /session/createsession
-      // and then NextAuth sign-in. For now, it's best to disable IS_DEV_SKIP_LOGIN.
-      console.warn("[DEV MODE] Auto-login is active but needs update for new session API. Please test manual login.");
-      // To make this work:
-      // 1. Call a dev version of authContext.createOrVerifyExternalSession (or a direct API call here)
-      // 2. With the sessionId and billId, call NextAuth signIn.
-    }
-  }, [IS_DEV_SKIP_LOGIN, tableIdFromUrl, isAuthenticated, isDevLoggingIn]);
-
 
   // Main effect to determine if login screen or menu should be shown
   useEffect(() => {
+    console.log("[TablePage Effect] Checking auth state. AuthContextLoading:", isAuthContextLoading, "IsAuthenticated:", isAuthenticated, "AuthTableId:", authTableId, "URLTableId:", tableIdFromUrl, "ExternalError:", externalSessionError);
     if (isAuthContextLoading) {
-      // Wait for AuthContext to finish any loading (e.g. initial session check, /session/createsession call)
+      console.log("[TablePage Effect] Auth context is loading, returning early.");
       return;
     }
 
     if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
-      // User is authenticated for this table, has session and bill
+      console.log("[TablePage Effect] User authenticated for this table.");
       if (externalSessionError) {
-        // If AuthContext reported an error (e.g., "Expired session" from createOrVerifyExternalSession)
-        // LoginFlow will handle displaying this. Ensure we show login.
+        console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Showing login.");
         setShowLogin(true);
       } else if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') { 
-        // Assuming 'Completed' is an old status and 'Confirmed' is the new one from API.
-        // If bill is paid, user should be logged out or redirected.
-        // For now, let's redirect to bill status page.
-        // This logic might also live in BillStatusPage or CheckoutPage based on flow.
-        // If on table page and bill is paid, likely means they came back.
-        // Consider if logout is more appropriate here.
-        // For now, if they land here and it's paid, show login to re-initiate.
-        console.log("[Auth] Bill is Confirmed/Completed. Showing login to re-initiate if needed.");
-        logout(); // Force logout and re-evaluation
+        console.log("[TablePage Effect] Bill is Confirmed/Completed. Forcing logout and showing login.");
+        logout(); 
         setShowLogin(true);
       } else {
-        // Session is active, not expired, and bill not paid
+        console.log("[TablePage Effect] Session active, bill not paid -> Showing menu (setShowLogin(false)).");
         setShowLogin(false);
       }
     } else {
-      // Not authenticated, or tableId mismatch, or session/billId missing
+      console.log("[TablePage Effect] Not authenticated for this table or mismatch -> Showing login.");
       setShowLogin(true);
     }
   }, [
@@ -121,33 +98,40 @@ export default function TablePage() {
 
   // Effect for initial menu (categories + sample items) load OR if showLogin becomes false
   useEffect(() => {
-    if (!showLogin && !isAuthContextLoading) { // Only fetch if login is hidden and auth context is not loading
+    if (!showLogin && !isAuthContextLoading) { 
       const fetchInitialMenu = async () => {
-        console.log("[PageLoad] Fetching initial menu (categories and sample items)...");
+        console.log("[TablePage InitialMenuFetch] Fetching initial menu (categories and sample items)...");
         setIsMenuLoading(true);
         setMenuError(null);
         try {
-          // This fetches category definitions and *sample* items for global search/fallback
           const response = await fetch('/api/menu', { cache: 'no-store' }); 
+          console.log("[TablePage InitialMenuFetch] /api/menu response status:", response.status);
           if (!response.ok) {
-            throw new Error(`Failed to fetch initial menu: ${response.statusText}`);
+            const errorText = await response.text();
+            console.error("[TablePage InitialMenuFetch] Failed to fetch initial menu:", response.status, errorText);
+            throw new Error(`Failed to fetch initial menu: ${response.status} ${errorText.substring(0,100)}`);
           }
           const data = await response.json();
+          console.log("[TablePage InitialMenuFetch] /api/menu data received:", data);
           const sampleItems = data.menuItems || localSampleMenuData; 
           setInitialSampleMenuItems(sampleItems);
-          setMenuItems(sampleItems); // Initially, menuItems are the sample items
+          setMenuItems(sampleItems); 
           setFetchedCategories(data.categories || []); 
+          console.log("[TablePage InitialMenuFetch] Initial menu data set. Categories:", data.categories, "Sample items count:", sampleItems.length);
         } catch (error: any) {
-          console.error("[PageLoad] Error fetching initial menu:", error.message);
+          console.error("[TablePage InitialMenuFetch] Error fetching initial menu:", error.message);
           setMenuError(error.message || 'Could not load initial menu.');
           setInitialSampleMenuItems(localSampleMenuData); 
           setMenuItems(localSampleMenuData);
-          setFetchedCategories([]); // Use local fallback or define structure for empty categories
+          setFetchedCategories([]); 
         } finally {
           setIsMenuLoading(false);
+          console.log("[TablePage InitialMenuFetch] Finished initial menu fetch. isMenuLoading:", false);
         }
       };
       fetchInitialMenu();
+    } else {
+      console.log("[TablePage InitialMenuFetch] Skipped: showLogin:", showLogin, "isAuthContextLoading:", isAuthContextLoading);
     }
   }, [showLogin, isAuthContextLoading]);
 
@@ -181,30 +165,30 @@ export default function TablePage() {
   }, [initialSampleMenuItems, fetchedCategories]);
 
   const displayedItems = useMemo(() => {
-    let itemsToDisplay = menuItems; // menuItems now correctly holds category-specific or sample items
+    let itemsToDisplay = menuItems; 
     if (searchTerm) {
       itemsToDisplay = itemsToDisplay.filter(item =>
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
       );
-      // If a category is selected, itemsToDisplay is already filtered for that category by handleCategorySelect.
-      // If no category is selected, itemsToDisplay is initialSampleMenuItems, so this search is global.
     }
     return itemsToDisplay;
-  }, [searchTerm, menuItems]); // Removed selectedCategory dependency as menuItems handles it
+  }, [searchTerm, menuItems]); 
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
   };
 
   const clearSelectionAndSearch = useCallback(() => {
+    console.log("[TablePage Actions] Clearing selection and search. Resetting menuItems to initial samples.");
     setSelectedCategory(null);
     setSearchTerm("");
-    setMenuItems(initialSampleMenuItems); // Reset to show all sample items (for category browsing)
+    setMenuItems(initialSampleMenuItems); 
     setMenuError(null); 
   }, [initialSampleMenuItems]);
 
   const handleCategorySelect = useCallback(async (categoryName: string) => {
+    console.log(`[TablePage CategorySelect] Category selected: ${categoryName}. Fetching items...`);
     setSelectedCategory(categoryName);
     setSearchTerm(""); 
     setIsMenuLoading(true);
@@ -216,17 +200,24 @@ export default function TablePage() {
         body: JSON.stringify({ categoryName }),
         cache: 'no-store', 
       });
+      console.log(`[TablePage CategorySelect] Response status from /api/menu/items for ${categoryName}: ${response.status}`);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `Status: ${response.status}` }));
+        const errorData = await response.json().catch(() => ({ error: `Status: ${response.status} ${response.statusText}` }));
+        console.error(`[TablePage CategorySelect] Error from /api/menu/items for ${categoryName}:`, errorData);
         throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
       }
       const data: MenuItemType[] = await response.json();
-      setMenuItems(data); // Update menuItems with category-specific items
+      console.log(`[TablePage CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3)); 
+      setMenuItems(data); 
+      console.log(`[TablePage CategorySelect] menuItems state updated with ${data.length} items from API.`);
     } catch (error: any) {
+      console.error(`[TablePage CategorySelect] Catch block error for ${categoryName}:`, error.message);
       setMenuError(error.message);
       setMenuItems([]); 
     } finally {
       setIsMenuLoading(false);
+      console.log(`[TablePage CategorySelect] Finished fetching for ${categoryName}. isMenuLoading: false`);
     }
   }, []);
 
@@ -242,24 +233,23 @@ export default function TablePage() {
     );
   }
   
-  if (isAuthContextLoading || isDevLoggingIn) {
+  if (isAuthContextLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
-        <p className="text-xl text-muted-foreground">
-          {isDevLoggingIn ? "Developer auto-login..." : "Initializing session..."}
-        </p>
+        <p className="text-xl text-muted-foreground">Initializing session...</p>
       </div>
     );
   }
 
   if (showLogin) {
-    // LoginFlow will now internally handle displaying authContext.externalSessionError
-    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { /* setShowLogin(false) handled by useEffect */ }} />;
+    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { console.log("[LoginFlow Success] onLoginSuccess called, page effect will hide login."); }} />;
   }
 
   // Menu loading state (after login and successful session validation)
-  if (isMenuLoading) {
+  // Show loading only if menu is truly loading for the first time or for a category change,
+  // not if menuItems already has content (e.g. from a previous successful load).
+  if (isMenuLoading && menuItems.length === 0 && !menuError) { 
     const loadingMessage = selectedCategory ? `Loading ${selectedCategory}...` : "Loading menu...";
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
@@ -272,11 +262,11 @@ export default function TablePage() {
   if (menuError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
-        <Info className="h-16 w-16 text-destructive mb-4" />
+        <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
         <h1 className="text-2xl font-semibold mb-2">{selectedCategory ? "Error Loading Items" : "Error Loading Menu"}</h1>
-        <p className="text-muted-foreground">{menuError}</p>
-        <button onClick={() => selectedCategory ? handleCategorySelect(selectedCategory) : window.location.reload()} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">Try Again</button>
-        {selectedCategory && <button onClick={clearSelectionAndSearch} className="mt-2 px-4 py-2 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90">Back to Categories</button>}
+        <p className="text-muted-foreground mb-3">{menuError}</p>
+        <Button onClick={() => selectedCategory ? handleCategorySelect(selectedCategory) : window.location.reload()} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">Try Again</Button>
+        {selectedCategory && <Button onClick={clearSelectionAndSearch} className="mt-2 px-4 py-2 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90">Back to Categories</Button>}
       </div>
     );
   }
@@ -291,3 +281,4 @@ export default function TablePage() {
     </div>
   );
 }
+
