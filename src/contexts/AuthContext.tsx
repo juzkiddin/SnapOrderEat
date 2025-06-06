@@ -49,7 +49,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAuthContextLoading, setIsAuthContextLoading] = useState<boolean>(false);
   const [externalSessionError, setExternalSessionError] = useState<string | null>(null);
 
-  const restaurantId = process.env.RESTAURANT_ID; // Changed from NEXT_PUBLIC_RESTAURANT_ID
+  const restaurantId = process.env.NEXT_PUBLIC_RESTAURANT_ID; // Reverted to NEXT_PUBLIC_RESTAURANT_ID
 
   const clearExternalSessionError = useCallback(() => {
     setExternalSessionError(null);
@@ -57,7 +57,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const createOrVerifyExternalSession = useCallback(async (mobileNum: string, tableId: string): Promise<ExternalSessionData | ExternalSessionError | null> => {
     if (!restaurantId) {
-      console.error("[AuthContext] RESTAURANT_ID is not set (it's server-side only and undefined here). Cannot create/verify session via direct client-side call.");
+      console.error("[AuthContext] NEXT_PUBLIC_RESTAURANT_ID is not set. Cannot create/verify session.");
       setExternalSessionError("Restaurant configuration error. Please try again later.");
       return null;
     }
