@@ -35,6 +35,7 @@ export default function CheckoutPage() {
     currentPaymentStatus, // This now comes from NextAuth session, updated by AuthContext
     isAuthContextLoading, // AuthContext's own loading state
     confirmPaymentExternal, // New function to call external payment confirmation
+    sessionStatus, // from useSession() via AuthContext
   } = useAuth();
   const { toast } = useToast();
   
@@ -89,7 +90,7 @@ export default function CheckoutPage() {
     // If still loading auth context, isPageLoading remains true
   }, [
     isAuthenticated, authBillId, billIdFromUrl, tableId, router, 
-    currentPaymentStatus, isAuthContextLoading, fetchBillTotal, billTotal, isFetchingBillTotal, sessionId
+    currentPaymentStatus, isAuthContextLoading, fetchBillTotal, billTotal, isFetchingBillTotal, sessionId, sessionStatus
   ]);
 
 
@@ -145,22 +146,45 @@ export default function CheckoutPage() {
         handler: async function (response: any) { // Razorpay success callback
           setIsProcessingPayment(true); // Keep loading true
           try {
-            // 3. Call our internal /api/session/confirm-payment, which calls the external API
-            const paymentConfirmed = await confirmPaymentExternal(sessionId); // Pass current sessionId
+            // Check currentPaymentStatus before attempting to confirm again
+            // This is a client-side check. The server will enforce this too.
+            if (currentPaymentStatus === 'Confirmed') {
+                toast({ title: "Already Confirmed", description: "This payment has already been confirmed.", variant: "default" });
+                router.push(`/bill-status/${billIdFromUrl}`);
+                setIsProcessingPayment(false);
+                return;
+            }
+
+            const paymentConfirmed = await confirmPaymentExternal(sessionId); 
 
             if (paymentConfirmed) {
               toast({ title: "Payment Successful!", description: `Payment ID: ${response.razorpay_payment_id}. Bill status updated.` });
               router.push(`/bill-status/${billIdFromUrl}`);
             } else {
-              // Error handled by confirmPaymentExternal re-throwing or by specific logic there.
-              // This path might not be hit if confirmPaymentExternal throws.
+              // This path might not be hit if confirmPaymentExternal throws, as it does for the "already confirmed" case.
               toast({ title: "Payment Confirmation Pending", description: "Payment processed, but final confirmation is pending. Check bill status or contact support.", variant: "default" });
             }
           } catch (verifyError: any) {
             console.error("Payment confirmation API error (in Razorpay handler):", verifyError);
-            toast({ title: "Payment Confirmation Error", description: verifyError.message || "Could not confirm payment with server.", variant: "destructive" });
+            // Specifically handle the "Session payment status is Confirmed, not Pending" error
+            if (verifyError?.message && 
+                (verifyError.message.includes("Session payment status is Confirmed, not Pending") ||
+                 verifyError.message.toLowerCase().includes("already confirmed"))) {
+              toast({
+                title: "Payment Already Confirmed",
+                description: "This session's payment was already confirmed.",
+                variant: "default"
+              });
+              router.push(`/bill-status/${billIdFromUrl}`);
+            } else {
+              toast({ 
+                title: "Payment Confirmation Error", 
+                description: verifyError.message || "Could not confirm payment with server.", 
+                variant: "destructive" 
+              });
+            }
           } finally {
-            setIsProcessingPayment(false); // Processing done here
+            setIsProcessingPayment(false);
           }
         },
         prefill: {},
@@ -177,15 +201,11 @@ export default function CheckoutPage() {
           setIsProcessingPayment(false);
       });
       rzp.open();
-      // Note: setIsLoadingProcessing(false) for the initial phase is implicitly handled as rzp.open() is async.
-      // The main setIsProcessingPayment(false) will be after handler or if rzp.open fails before handler.
-      // To prevent premature disabling of button, we keep it true until Razorpay flow ends.
 
     } catch (error: any) {
       toast({ title: "Payment Initiation Error", description: error.message, variant: "destructive" });
-      setIsProcessingPayment(false); // Error before Razorpay dialog opens
+      setIsProcessingPayment(false);
     }
-    // If rzp.open() is called, setIsProcessingPayment remains true until handler/failure.
   };
   
   if (isPageLoading || (isAuthenticated && (isAuthContextLoading || isFetchingBillTotal))) {
@@ -248,3 +268,5 @@ export default function CheckoutPage() {
     </>
   );
 }
+
+    
