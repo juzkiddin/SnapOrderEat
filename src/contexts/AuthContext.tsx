@@ -3,171 +3,167 @@
 
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { useSession, signOut as nextAuthSignOut } from 'next-auth/react';
+import { useSession, signOut as nextAuthSignOut, update as updateNextAuthSession } from 'next-auth/react';
 
-type PaymentStatus = 'Pending' | 'Completed';
+// As per the new API documentation
+type PaymentStatusFromApi = "Pending" | "Confirmed" | "Failed" | "Expired" | "NotCompleted";
+type SessionStatusFromApi = "Active" | "Expired" | "Completed";
 
-interface AuthState {
-  // isAuthenticated, tableId, phoneNumber, billId will now primarily come from NextAuth session
-  currentBillPaymentStatus: PaymentStatus | null;
-  isLoadingBillStatus: boolean;
-  // Keep a local loading state for the AuthContext itself, e.g. when transitioning or waiting for session
-  isContextLoading: boolean; 
+interface ExternalSessionData {
+  sessionId: string;
+  billId: string;
+  paymentStatus: PaymentStatusFromApi;
 }
 
-interface AuthContextType extends AuthState {
-  // login is effectively handled by NextAuth's signIn, so we remove it from here.
-  // onLoginSuccess in LoginFlow can trigger any necessary context updates.
-  logout: () => void; // This will now call NextAuth's signOut
-  setPaymentStatusForBill: (billId: string, status: PaymentStatus) => Promise<void>;
-  fetchAndSetBillStatus: (billId: string) => Promise<void>;
-  // Expose derived auth state for convenience, though direct useSession is preferred for primary auth checks
+interface ExternalSessionError {
+  sessionStatus: "Expired"; // Only "Expired" is a non-error status that needs special handling
+  message?: string; // Optional: for other errors
+}
+
+interface AuthContextType {
+  // Derived from NextAuth session primarily
   isAuthenticated: boolean;
+  sessionId: string | null;
+  billId: string | null;
   tableId: string | null;
   phoneNumber: string | null;
-  billId: string | null;
+  currentPaymentStatus: PaymentStatusFromApi | null;
+
+  // Context-specific state
+  isAuthContextLoading: boolean; // Loading state for context operations like external API calls
+  externalSessionError: string | null; // For messages like "Your previous session has expired."
+
+  // Functions
+  createOrVerifyExternalSession: (mobileNum: string, tableId: string) => Promise<ExternalSessionData | ExternalSessionError | null>;
+  confirmPaymentExternal: (sessionId: string) => Promise<boolean>; // Returns true on success
+  logout: () => Promise<void>;
+  clearExternalSessionError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const initialState: AuthState = {
-  currentBillPaymentStatus: null,
-  isLoadingBillStatus: false,
-  isContextLoading: true, // Initially true until session is checked
-};
+const EXTERNAL_API_BASE_URL = "https://catalogue.snapordereat.in";
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const { data: session, status: sessionStatus } = useSession();
-  const [authState, setAuthState] = useState<AuthState>(initialState);
+  const { data: session, status: sessionStatus, update: nextAuthUpdate } = useSession();
+  const [isAuthContextLoading, setIsAuthContextLoading] = useState<boolean>(false);
+  const [externalSessionError, setExternalSessionError] = useState<string | null>(null);
 
-  const billIdFromSession = session?.user?.billId || null;
+  const restaurantId = process.env.NEXT_PUBLIC_RESTAURANT_ID; // Use NEXT_PUBLIC_ for client-side access
 
-  useEffect(() => {
-    if (sessionStatus === 'loading') {
-      setAuthState(prev => ({ ...prev, isContextLoading: true }));
-      return;
-    }
-    // Session loaded (authenticated or unauthenticated)
-    setAuthState(prev => ({ ...prev, isContextLoading: false }));
-
-    if (sessionStatus === 'authenticated' && billIdFromSession) {
-      // If authenticated and billId exists, fetch its status
-      // Check if billId has changed or if status is null to avoid redundant fetches
-      if (billIdFromSession !== authState.billId || authState.currentBillPaymentStatus === null) {
-         fetchAndSetBillStatus(billIdFromSession);
-      }
-    } else if (sessionStatus === 'unauthenticated') {
-      // Clear bill status if user is unauthenticated
-      setAuthState(prev => ({ 
-        ...prev, 
-        currentBillPaymentStatus: null, 
-        isLoadingBillStatus: false,
-        // Reset other derived states
-        isAuthenticated: false,
-        tableId: null,
-        phoneNumber: null,
-        billId: null,
-      }));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionStatus, billIdFromSession]); // Removed authState from deps to avoid loop, billIdFromSession handles the trigger
-
-
-  const fetchAndSetBillStatus = useCallback(async (billIdToFetch: string) => {
-    if (!billIdToFetch) return;
-    setAuthState(prevState => ({ ...prevState, isLoadingBillStatus: true }));
-    try {
-      const response = await fetch(`/api/bills/${billIdToFetch}/status`);
-      if (!response.ok) {
-        if (response.status === 404) {
-            setAuthState(prevState => ({
-            ...prevState,
-            currentBillPaymentStatus: 'Pending', 
-            isLoadingBillStatus: false,
-          }));
-          return;
-        }
-        let errorMsg = `Failed to fetch bill status. HTTP Status: ${response.status}.`;
-        try {
-          const errorData = await response.json();
-          errorMsg += ` Server Message: ${errorData.error || errorData.message || JSON.stringify(errorData)}.`;
-        } catch (e) {
-          errorMsg += ` Status Text: ${response.statusText || 'N/A'}. (Response not JSON or empty).`;
-        }
-        throw new Error(errorMsg);
-      }
-      const data = await response.json();
-      setAuthState(prevState => ({
-        ...prevState,
-        currentBillPaymentStatus: data.paymentStatus,
-        isLoadingBillStatus: false,
-      }));
-    } catch (error) {
-      console.error("Error fetching bill status:", error);
-      setAuthState(prevState => ({
-        ...prevState,
-        currentBillPaymentStatus: 'Pending', 
-        isLoadingBillStatus: false,
-      }));
-    }
+  const clearExternalSessionError = useCallback(() => {
+    setExternalSessionError(null);
   }, []);
 
-  const logout = useCallback(async () => {
-    await nextAuthSignOut({ redirect: false }); // Perform NextAuth sign out
-    // State update for AuthContext will be handled by the useEffect watching sessionStatus
-  }, []);
-
-  const setPaymentStatusForBill = useCallback(async (billIdToUpdate: string, status: PaymentStatus) => {
-    if (billIdFromSession !== billIdToUpdate) {
-        console.warn("Attempting to update status for a bill not in current session. This might be an issue or intended for admin-like actions.");
+  const createOrVerifyExternalSession = useCallback(async (mobileNum: string, tableId: string): Promise<ExternalSessionData | ExternalSessionError | null> => {
+    if (!restaurantId) {
+      console.error("[AuthContext] RESTAURANT_ID is not set. Cannot create/verify session.");
+      setExternalSessionError("Restaurant configuration error. Please try again later.");
+      return null;
     }
+    setIsAuthContextLoading(true);
+    setExternalSessionError(null);
     try {
-      const response = await fetch(`/api/bills/${billIdToUpdate}/status`, {
+      const response = await fetch(`${EXTERNAL_API_BASE_URL}/session/createsession`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ mobileNum, restaurantId, tableId }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        let errorMsg = `Failed to update bill status. HTTP Status: ${response.status}.`;
-        try {
-          const errorData = await response.json();
-          errorMsg += ` Server Message: ${errorData.error || errorData.message || JSON.stringify(errorData)}.`;
-        } catch (e) {
-          errorMsg += ` Status Text: ${response.statusText || 'N/A'}. (Response not JSON or empty).`;
-        }
-        throw new Error(errorMsg);
+        // For 400 or 500 errors from the external API
+        throw new Error(data.message || `Failed to create/verify session. Status: ${response.status}`);
       }
+
+      if (data.sessionStatus === "Expired") {
+        setExternalSessionError("Your previous session has expired. Please start a new one.");
+        return { sessionStatus: "Expired" };
+      }
+
+      if (data.sessionId && data.billId && data.paymentStatus) {
+        // Successfully got an active session
+        return {
+          sessionId: data.sessionId,
+          billId: data.billId,
+          paymentStatus: data.paymentStatus as PaymentStatusFromApi,
+        };
+      }
+      // Should not happen if API conforms to spec, but as a fallback
+      throw new Error("Invalid session data received from server.");
+
+    } catch (error: any) {
+      console.error("[AuthContext] Error in createOrVerifyExternalSession:", error);
+      setExternalSessionError(error.message || "Could not connect to session service.");
+      return null;
+    } finally {
+      setIsAuthContextLoading(false);
+    }
+  }, [restaurantId]);
+
+  const confirmPaymentExternal = useCallback(async (sessionIdToConfirm: string): Promise<boolean> => {
+    if (!sessionIdToConfirm) {
+      console.error("[AuthContext] Session ID is required to confirm payment.");
+      // Potentially set an error to display via toast elsewhere
+      return false;
+    }
+    setIsAuthContextLoading(true);
+    try {
+      const response = await fetch('/api/session/confirm-payment', { // Calls our internal Next.js API route
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sessionIdToConfirm }),
+      });
 
       const data = await response.json();
-      if (billIdFromSession === billIdToUpdate) {
-        setAuthState(prevState => ({
-          ...prevState,
-          currentBillPaymentStatus: data.paymentStatus,
-        }));
-      }
-    } catch (error) {
-      console.error("AuthContext: Error setting bill status:", error); 
-      throw error; 
-    }
-  }, [billIdFromSession]);
 
-  // Derive auth state from NextAuth session
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || data.error || `Failed to confirm payment. Status: ${response.status}`);
+      }
+
+      // If payment is confirmed successfully by the external API (via our internal route)
+      // Update NextAuth session to reflect the new payment status
+      await nextAuthUpdate({ paymentStatus: data.paymentStatus || "Confirmed" });
+      
+      console.log("[AuthContext] Payment confirmed, session paymentStatus updated:", data.paymentStatus);
+      return true;
+
+    } catch (error: any) {
+      console.error("[AuthContext] Error in confirmPaymentExternal:", error);
+      // Display this error via toast in the calling component (CheckoutPage)
+      throw error; // Re-throw to be caught by CheckoutPage
+    } finally {
+      setIsAuthContextLoading(false);
+    }
+  }, [nextAuthUpdate]);
+
+  const logout = useCallback(async () => {
+    setIsAuthContextLoading(true);
+    setExternalSessionError(null);
+    await nextAuthSignOut({ redirect: false });
+    // Session state in context will automatically update via useSession hook
+    setIsAuthContextLoading(false);
+  }, []);
+  
+  // Derived state from NextAuth session
   const isAuthenticated = sessionStatus === 'authenticated';
-  const tableId = session?.user?.tableId || null;
-  const phoneNumber = session?.user?.phoneNumber || null;
-  // billId is already billIdFromSession
+  const currentSession = session?.user;
 
   return (
-    <AuthContext.Provider value={{ 
-      ...authState, 
-      logout, 
-      setPaymentStatusForBill, 
-      fetchAndSetBillStatus,
+    <AuthContext.Provider value={{
       isAuthenticated,
-      tableId,
-      phoneNumber,
-      billId: billIdFromSession 
+      sessionId: currentSession?.sessionId || null,
+      billId: currentSession?.billId || null,
+      tableId: currentSession?.tableId || null,
+      phoneNumber: currentSession?.phoneNumber || null,
+      currentPaymentStatus: currentSession?.paymentStatus as PaymentStatusFromApi || null,
+      isAuthContextLoading: isAuthContextLoading || sessionStatus === 'loading',
+      externalSessionError,
+      createOrVerifyExternalSession,
+      confirmPaymentExternal,
+      logout,
+      clearExternalSessionError,
     }}>
       {children}
     </AuthContext.Provider>

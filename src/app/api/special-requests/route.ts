@@ -2,10 +2,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { store } from '@/lib/apiStore'; // To check if billId exists
+// store import removed as it's no longer used for bill validation here
 
 const SpecialRequestSchema = z.object({
-  billId: z.string().min(1, "Bill ID is required"),
+  // Changed from billId to sessionId as per typical session-based flows,
+  // but the new external session API returns both. BillId might be more persistent for KDS.
+  // Let's assume for now billId is still the relevant identifier for kitchen/special requests.
+  billId: z.string().min(1, "Bill ID is required"), 
   requestText: z.string().min(1, "Request text cannot be empty").max(500, "Request text is too long"),
 });
 
@@ -20,16 +23,15 @@ export async function POST(request: NextRequest) {
 
     const { billId, requestText } = validationResult.data;
 
-    // Optional: Check if the billId actually exists in our store
-    const billExists = store.bills.some(bill => bill.id === billId);
-    if (!billExists) {
-      return NextResponse.json({ error: `Bill with ID ${billId} not found.` }, { status: 404 });
-    }
+    // With the external session API, direct validation of billId against an in-memory store is removed.
+    // We trust that the client has a valid billId from an active session.
+    // If stricter validation is needed, this API would need to call the external /session/createsession
+    // or a new /session/validate endpoint, but that might be overkill for special requests.
 
-    // Simulate processing the request (e.g., logging, sending to a kitchen display system)
     console.log(`Special Request for Bill ID [${billId}]: ${requestText}`);
+    // Here, you would integrate with your Kitchen Display System (KDS) or logging service.
 
-    return NextResponse.json({ success: true, message: 'Special request received.' }, { status: 200 });
+    return NextResponse.json({ success: true, message: 'Special request received and logged.' }, { status: 200 });
 
   } catch (error: any) {
     console.error('API Error processing special request:', error);

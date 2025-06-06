@@ -8,6 +8,8 @@ declare module "next-auth" {
       phoneNumber?: string | null;
       tableId?: string | null;
       billId?: string | null;
+      sessionId?: string | null; // Added sessionId
+      paymentStatus?: string | null; // Added paymentStatus
     } & DefaultSession["user"];
   }
 
@@ -15,6 +17,8 @@ declare module "next-auth" {
     phoneNumber?: string | null;
     tableId?: string | null;
     billId?: string | null;
+    sessionId?: string | null; // Added sessionId
+    paymentStatus?: string | null; // Added paymentStatus
   }
 }
 
@@ -23,5 +27,7 @@ declare module "next-auth/jwt" {
     phoneNumber?: string | null;
     tableId?: string | null;
     billId?: string | null;
+    sessionId?: string | null; // Added sessionId
+    paymentStatus?: string | null; // Added paymentStatus
   }
 }
