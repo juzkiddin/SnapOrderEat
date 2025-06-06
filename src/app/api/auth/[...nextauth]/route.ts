@@ -53,30 +53,42 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async jwt({ token, user, trigger, session: newSessionData }) {
-      if (user) { // On sign-in
-        token.phoneNumber = user.phoneNumber ?? null;
-        token.tableId = user.tableId ?? null;
-        token.billId = user.billId ?? null;
-        token.sessionId = user.sessionId ?? null; // Persist sessionId
-        token.paymentStatus = user.paymentStatus ?? null; // Persist paymentStatus
+      try {
+        if (user) { // On sign-in
+          token.phoneNumber = user.phoneNumber ?? null;
+          token.tableId = user.tableId ?? null;
+          token.billId = user.billId ?? null;
+          token.sessionId = user.sessionId ?? null; // Persist sessionId
+          token.paymentStatus = user.paymentStatus ?? null; // Persist paymentStatus
+        }
+        // Handle session updates for payment status
+        if (trigger === "update" && newSessionData?.paymentStatus) {
+          token.paymentStatus = newSessionData.paymentStatus;
+        }
+        return token;
+      } catch (error) {
+        console.error("[NextAuth JWT Callback Error]", error);
+        // Re-throwing the error so NextAuth can handle it, potentially logging more details
+        // or leading to a more specific error page than a generic HTML response.
+        throw error;
       }
-      // Handle session updates for payment status
-      if (trigger === "update" && newSessionData?.paymentStatus) {
-        token.paymentStatus = newSessionData.paymentStatus;
-      }
-      return token;
     },
     async session({ session, token }) {
-      // Assign properties from token to session.user
-      session.user = {
-        ...session.user, // Keep existing session.user fields if any (like email, name, image from other providers)
-        phoneNumber: token.phoneNumber as string | null,
-        tableId: token.tableId as string | null,
-        billId: token.billId as string | null,
-        sessionId: token.sessionId as string | null, // Expose sessionId
-        paymentStatus: token.paymentStatus as string | null, // Expose paymentStatus
-      };
-      return session;
+      try {
+        // Assign properties from token to session.user
+        session.user = {
+          ...session.user, // Keep existing session.user fields if any (like email, name, image from other providers)
+          phoneNumber: token.phoneNumber as string | null,
+          tableId: token.tableId as string | null,
+          billId: token.billId as string | null,
+          sessionId: token.sessionId as string | null, // Expose sessionId
+          paymentStatus: token.paymentStatus as string | null, // Expose paymentStatus
+        };
+        return session;
+      } catch (error) {
+        console.error("[NextAuth Session Callback Error]", error);
+        throw error;
+      }
     },
   },
   pages: {
