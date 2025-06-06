@@ -107,7 +107,7 @@ export default function BillStatusPage() {
     case 'Confirmed':
       StatusIcon = CheckCircle2;
       statusTitle = "Payment Confirmed!";
-      statusDescription = "Thank you! Your payment has been successfully confirmed.";
+      statusDescription = "Payment Success. We are sad to see you go. Please visit again!!";
       iconClass = "text-green-500";
       break;
     case 'Failed':
@@ -145,7 +145,7 @@ export default function BillStatusPage() {
         </CardHeader>
         <CardContent>
           <CardDescription className="text-lg mb-1">{statusDescription}</CardDescription>
-          {currentPaymentStatus === 'Confirmed' && <p className="text-muted-foreground mt-1">We hope to see you again soon at The Tasty Spoon!</p>}
+          {/* Removed the extra "We hope to see you again soon" for 'Confirmed' as it's now part of statusDescription */}
         </CardContent>
         <CardFooter className="flex flex-col items-center space-y-3 pt-6">
           <Button onClick={handleExitOrNewOrder} className="w-full text-lg py-6">
@@ -156,3 +156,4 @@ export default function BillStatusPage() {
     </div>
   );
 }
+
