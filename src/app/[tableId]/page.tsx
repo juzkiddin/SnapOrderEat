@@ -36,12 +36,11 @@ export default function TablePage() {
     logout,
     isAuthContextLoading,
     externalSessionError,
-    // isSessionValidationLoading, // No longer directly used here, covered by isAuthContextLoading
   } = useAuth();
   const { getItemCount, getCartTotal, setIsCartSheetOpen } = useCart();
 
   const [showLogin, setShowLogin] = useState(true);
-  const [hasHadSuccessfulLogin, setHasHadSuccessfulLogin] = useState(false); // New state
+  const [hasHadSuccessfulLogin, setHasHadSuccessfulLogin] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
@@ -61,61 +60,77 @@ export default function TablePage() {
 
   // Main effect to determine if login screen or menu should be shown
   useEffect(() => {
-    console.log(`[TablePage Effect] Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLogin: ${showLogin}, HasHadSuccessfulLogin: ${hasHadSuccessfulLogin}`);
+    console.log(`[TablePage Effect] Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLoginState: ${showLogin}, HasHadSuccessfulLogin: ${hasHadSuccessfulLogin}`);
 
     if (externalSessionError) {
-        console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Showing login, reset successful login flag.");
-        setShowLogin(true);
-        setHasHadSuccessfulLogin(false); // Reset on any overriding error
-        return;
-    }
-
-    if (isAuthContextLoading) {
-        console.log("[TablePage Effect] Auth context is loading.");
-        if (!hasHadSuccessfulLogin) {
-            console.log("[TablePage Effect] Auth loading AND no successful login yet -> Ensuring login is shown.");
-            setShowLogin(true);
-        }
-        // If auth is loading but we HAD a successful login, we don't flip back to login screen here
-        // unless it resolves to an externalSessionError (handled above).
-        // showLogin remains false, allowing "Loading Delicious Food..." or menu to show.
-        return;
-    }
-
-    // At this point, isAuthContextLoading is false, and externalSessionError is null.
-    if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
-        if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
-            console.log("[TablePage Effect] Bill is Confirmed/Completed. Forcing logout and showing login.");
-            logout();
-            setShowLogin(true);
-            setHasHadSuccessfulLogin(false);
-        } else {
-            console.log("[TablePage Effect] Session active, bill not paid -> Showing menu (setShowLogin(false)).");
-            setShowLogin(false); // User is authenticated and session is valid.
-        }
-    } else {
-        // Not authenticated, or tableId mismatch, or missing session details after loading and no error
-        console.log("[TablePage Effect] Conditions for showing menu not met (e.g., not authenticated, ID mismatch) -> Showing login.");
+        console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Forcing login, reset successful login flag.");
         setShowLogin(true);
         setHasHadSuccessfulLogin(false);
+        return;
     }
+
+    // If login flow has successfully completed at least once in this component's lifecycle
+    if (hasHadSuccessfulLogin) {
+        if (isAuthContextLoading) {
+            // LoginFlow succeeded, now AuthContext is doing background validation.
+            // We want to HIDE LoginFlow and let the page show its own loader for menu/session finalization.
+            console.log("[TablePage Effect] Has successful login, AuthContext is loading -> Ensuring LoginFlow is hidden (setShowLogin(false)). Page will show its own loader.");
+            setShowLogin(false);
+            return; // Wait for AuthContext loading to finish
+        }
+        // AuthContext is NOT loading, and we had a successful login.
+        // Proceed to check if the session is still valid to show the menu.
+        if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
+            if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
+                console.log("[TablePage Effect] Has successful login, but Bill is Confirmed/Completed. Forcing logout.");
+                logout(); // This will likely set externalSessionError or change isAuthenticated, re-triggering effect.
+                setShowLogin(true); // Proactively set for this cycle until logout completes
+                setHasHadSuccessfulLogin(false);
+            } else {
+                console.log("[TablePage Effect] Has successful login, Session active & valid, bill not paid -> Showing menu.");
+                setShowLogin(false);
+            }
+        } else {
+            // Had successful login, but AuthContext finished loading and session is NOT valid anymore (e.g., validation failed post-login).
+            console.log("[TablePage Effect] Has successful login, but session now invalid (e.g., isAuthenticated is false post-validation) -> Forcing login.");
+            setShowLogin(true);
+            setHasHadSuccessfulLogin(false);
+        }
+        return;
+    }
+
+    // Fallback for initial load (hasHadSuccessfulLogin is false)
+    if (isAuthContextLoading) {
+        console.log("[TablePage Effect] No prior successful login, AuthContext is loading -> Ensuring login is shown.");
+        setShowLogin(true); // LoginFlow itself will handle its own internal loading spinners
+        return;
+    }
+
+    // No prior successful login, and AuthContext is NOT loading.
+    // Check authentication status to decide if menu can be shown or login is needed.
+    if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
+         if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
+            console.log("[TablePage Effect] No prior successful login, Bill Confirmed/Completed. Forcing logout.");
+            logout();
+            setShowLogin(true);
+         } else {
+            console.log("[TablePage Effect] No prior successful login, Session active & valid -> Showing menu.");
+            setShowLogin(false);
+         }
+    } else {
+        console.log("[TablePage Effect] No prior successful login, Session invalid or incomplete -> Showing login.");
+        setShowLogin(true);
+    }
+
   }, [
-    isAuthenticated,
-    authTableId,
-    tableIdFromUrl,
-    authSessionId,
-    authBillId,
-    currentPaymentStatus,
-    isAuthContextLoading,
-    externalSessionError,
-    logout,
-    hasHadSuccessfulLogin // Added dependency
+    isAuthenticated, authTableId, tableIdFromUrl, authSessionId, authBillId,
+    currentPaymentStatus, isAuthContextLoading, externalSessionError, logout, hasHadSuccessfulLogin
   ]);
 
 
   // Effect for initial menu (categories + sample items) load OR if showLogin becomes false
   useEffect(() => {
-    if (!showLogin && !isAuthContextLoading) {
+    if (!showLogin && !isAuthContextLoading) { // Ensure AuthContext isn't in its own validation loading phase
       const fetchInitialMenu = async () => {
         console.log("[TablePage InitialMenuFetch] Conditions met. Fetching initial menu (categories and sample items)...");
         setIsMenuLoading(true);
@@ -150,7 +165,7 @@ export default function TablePage() {
     } else {
       console.log(`[TablePage InitialMenuFetch] Skipped: showLogin: ${showLogin}, isAuthContextLoading: ${isAuthContextLoading}`);
     }
-  }, [showLogin, isAuthContextLoading]);
+  }, [showLogin, isAuthContextLoading]); // isAuthContextLoading dependency added here
 
   // Welcome message animation
   useEffect(() => {
@@ -241,6 +256,8 @@ export default function TablePage() {
 
   const openSpecialRequestDialog = () => setIsSpecialRequestDialogOpen(true);
 
+  // ---- Page Rendering Logic ----
+
   // Invalid Table Link (Top Priority Check)
   if (!tableIdFromUrl) {
     return (
@@ -252,32 +269,30 @@ export default function TablePage() {
     );
   }
 
-  // Auth Context Loading (NextAuth or custom session validation OR createSession)
-  // Show "Initializing session..." only if login flow hasn't successfully completed yet.
-  if (isAuthContextLoading && !hasHadSuccessfulLogin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
-        <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
-        <p className="text-xl text-muted-foreground">Initializing session...</p>
-      </div>
-    );
-  }
-
-  // If showLogin is true (due to failed auth, external error, or initial state before auth completes)
+  // If showLogin is true (determined by the main useEffect), render LoginFlow.
+  // LoginFlow handles its own internal loading spinners for OTP processes.
   if (showLogin) {
     return <LoginFlow
               tableIdFromUrl={tableIdFromUrl}
               onLoginSuccess={() => {
                 console.log("[LoginFlow Success] onLoginSuccess called, setting hasHadSuccessfulLogin to true.");
                 setHasHadSuccessfulLogin(true);
+                // Main useEffect will now see hasHadSuccessfulLogin=true and set showLogin=false
+                // even if isAuthContextLoading is true (for AuthContext's validation phase).
               }}
             />;
   }
 
-  // Menu loading state (after successful auth & session validation, and showLogin is false)
-  // This is where "Loading Delicious Food..." should appear.
-  if (isMenuLoading && menuItems.length === 0 && !menuError) {
-    const loadingMessage = selectedCategory ? `Loading ${selectedCategory}...` : "Loading Delicious Food...";
+  // If we reach here, showLogin is false.
+  // This implies LoginFlow has succeeded OR user landed on page already authenticated and validated.
+
+  // Display "Loading Delicious Food..." if menu items are being fetched OR
+  // if AuthContext is still performing background validation AFTER LoginFlow succeeded.
+  if ( (isAuthContextLoading && hasHadSuccessfulLogin) || (isMenuLoading && menuItems.length === 0 && !menuError) ) {
+    const loadingMessage = (isAuthContextLoading && hasHadSuccessfulLogin)
+      ? "Finalizing session..." // Shown if AuthContext is validating post-LoginFlow success
+      : (selectedCategory ? `Loading ${selectedCategory}...` : "Loading Delicious Food..."); // Shown when actually fetching menu
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -286,7 +301,8 @@ export default function TablePage() {
     );
   }
 
-  // Menu error state
+
+  // Menu error state (only if not showing login and not in a primary loading state)
   if (menuError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
@@ -310,4 +326,4 @@ export default function TablePage() {
     </div>
   );
 }
-
+    
