@@ -2,7 +2,7 @@
 "use client";
 
 import { useRouter } from 'next/navigation';
-import { useMemo, useEffect, useState } from 'react'; // Added useEffect, useState
+import { useMemo, useEffect, useState } from 'react';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrders } from '@/contexts/OrderContext';
@@ -12,9 +12,10 @@ import { Textarea } from '@/components/ui/textarea';
 import CartItemCard from './CartItemCard';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import type { OrderStatus, OrderItemType } from '@/types'; // Removed OrderType as it's inferred
+import type { OrderStatus, OrderItemType } from '@/types'; 
 import { Badge } from '@/components/ui/badge';
-import { Clock, ChefHat, CheckCircle2, ListOrdered, FileText, Home, CreditCard, Loader2 } from 'lucide-react';
+import { Clock, ChefHat, CheckCircle2, ListOrdered, FileText, Home, CreditCard, Loader2, AlertTriangle } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 const getOverallOrderStatus = (items: OrderItemType[]): OrderStatus => {
   if (!items || items.length === 0) return 'Pending';
@@ -41,7 +42,7 @@ export default function Cart() {
     isCartSheetOpen,
     setIsCartSheetOpen
   } = useCart();
-  const { billId, isAuthenticated, tableId } = useAuth();
+  const { billId, isAuthenticated, tableId, currentPaymentStatus } = useAuth(); // Added currentPaymentStatus
   const { 
     addOrder, 
     getOrdersByBillId, 
@@ -50,11 +51,11 @@ export default function Cart() {
     error: ordersError 
   } = useOrders();
   const router = useRouter();
+  const { toast } = useToast(); // Added
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
   const currentCartTotal = getCartTotal();
 
-  // Load orders when billId changes or cart opens and billId is available
   useEffect(() => {
     if (isAuthenticated && billId && isCartSheetOpen) {
       loadOrdersForBill(billId);
@@ -63,7 +64,7 @@ export default function Cart() {
 
   const allOrdersForBill = useMemo(() => {
     if (isAuthenticated && billId) {
-      return getOrdersByBillId(billId); // Reads from OrderContext's local state
+      return getOrdersByBillId(billId);
     }
     return [];
   }, [isAuthenticated, billId, getOrdersByBillId]);
@@ -78,21 +79,28 @@ export default function Cart() {
       return;
     }
     if (!billId) {
-      console.error("Authentication Error: Cannot place order without a valid bill ID.");
-      // Potentially show a toast or error message to the user
+      toast({ title: "Authentication Error", description: "Cannot place order without a valid bill ID.", variant: "destructive" });
       return;
     }
+
+    // Check if payment is pending
+    if (currentPaymentStatus === 'Pending') {
+      toast({
+        title: "Order Blocked",
+        description: "Bill requested from waiter. Please complete the current payment to reorder.",
+        variant: "destructive",
+        duration: 5000,
+      });
+      return;
+    }
+
     setIsSubmittingOrder(true);
     const newOrder = await addOrder(billId, cartItems, specialRequests, currentCartTotal);
     setIsSubmittingOrder(false);
     if (newOrder) {
       clearCart();
-      // User remains in the cart sheet, order appears in "Recent Orders"
-      // Force a reload of orders for the bill to include the new one,
-      // though addOrder should ideally update the context state.
-      // loadOrdersForBill(billId); // This might be redundant if addOrder updates context correctly
     } else {
-      // Handle order submission error (e.g., show a toast)
+      toast({ title: "Order Error", description: "Order submission failed. Please try again.", variant: "destructive" });
       console.error("Order submission failed.");
     }
   };
@@ -127,6 +135,13 @@ export default function Cart() {
         </SheetHeader>
 
         <ScrollArea className="flex-grow">
+          {currentPaymentStatus === 'Pending' && cartItems.length > 0 && (
+            <div className="p-4 bg-yellow-50 border-b border-yellow-200 text-yellow-700 text-sm flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              <span>Bill is pending. Complete payment to place new orders.</span>
+            </div>
+          )}
+
           {cartItems.length > 0 ? (
             <>
               <div className="divide-y border-b">
@@ -145,6 +160,7 @@ export default function Cart() {
                     value={specialRequests}
                     onChange={(e) => setSpecialRequests(e.target.value)}
                     className="min-h-[80px]"
+                    disabled={currentPaymentStatus === 'Pending'}
                   />
                 </div>
                 <Separator />
@@ -161,7 +177,7 @@ export default function Cart() {
               <p className="text-muted-foreground text-sm">No recent orders found for this bill.</p>
                 <Button variant="link" className="mt-4" onClick={handleGoToMenu}>Continue Shopping</Button>
             </div>
-          ) : cartItems.length === 0 && !ordersLoading ? ( // Cart empty, but orders might exist or be loading
+          ) : cartItems.length === 0 && !ordersLoading ? ( 
             <div className="p-4 text-center text-muted-foreground text-sm border-b">
               Your cart is currently empty. Add items to start a new order.
             </div>
@@ -231,18 +247,18 @@ export default function Cart() {
                 <Button variant="outline" onClick={clearCart} className="w-full sm:flex-1" disabled={isSubmittingOrder}>
                     Clear Current Order
                 </Button>
-                <Button onClick={handleSubmitOrder} className="w-full sm:flex-1" disabled={isSubmittingOrder}>
+                <Button onClick={handleSubmitOrder} className="w-full sm:flex-1" disabled={isSubmittingOrder || currentPaymentStatus === 'Pending'}>
                     {isSubmittingOrder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Submit Current Order (₹{currentCartTotal.toFixed(2)})
                 </Button>
                 </div>
-            ) : allOrdersForBill.length > 0 || ordersLoading ? ( // Show menu button if orders exist or are loading, and cart is empty
+            ) : allOrdersForBill.length > 0 || ordersLoading ? (
                 <Button variant="default" className="w-full" onClick={handleGoToMenu}>
                     <Home className="mr-2 h-4 w-4" /> Menu
                 </Button>
             ) : null }
             
-            {allOrdersForBill.length > 0 && (
+            {allOrdersForBill.length > 0 && ( // Show checkout if there are any orders, regardless of cartItems
                 <Button
                 onClick={() => {
                     if (billId) {
@@ -250,7 +266,7 @@ export default function Cart() {
                     }
                 }}
                 className="w-full"
-                disabled={!billId || isSubmittingOrder}
+                disabled={!billId || isSubmittingOrder} // Keep disabled if an order is submitting
                 variant="default" 
                 >
                 <CreditCard className="mr-2 h-4 w-4" /> Proceed to Checkout

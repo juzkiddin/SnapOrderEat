@@ -60,10 +60,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     isLoggingOutRef.current = true;
     console.log('[AuthContext] logout called. Resetting states and signing out.');
     
-    setIsAuthContextLoadingInternal(true); // Indicate loading for logout ops
+    setIsAuthContextLoadingInternal(true);
     setExternalSessionError(null);
-    setIsSessionValidationLoading(false); // Stop any ongoing validation
-    setValidateCurrentSessionTrigger(0);  // Reset validation trigger
+    setIsSessionValidationLoading(false);
+    setValidateCurrentSessionTrigger(0); 
 
     nextAuthSignOut({ redirect: false })
       .then(() => {
@@ -111,10 +111,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         throw new Error(data.message || `Failed to create/verify session. Status: ${response.status}`);
       }
+
       if (data.sessionId && data.billId && data.paymentStatus) {
+        // If this call might be for an existing session (e.g., from BillStatusPage to verify), update NextAuth session.
+        const currentAuthSession = session; // Capture current session state
+        if (currentAuthSession?.user?.sessionId === data.sessionId && 
+            currentAuthSession?.user?.billId === data.billId &&
+            currentAuthSession?.user?.paymentStatus !== data.paymentStatus) {
+            console.log('[AuthContext] createOrVerifyExternalSession: Same session, different paymentStatus. Updating NextAuth session to:', data.paymentStatus);
+            await nextAuthUpdate({ paymentStatus: data.paymentStatus });
+        }
         console.log('[AuthContext] createOrVerifyExternalSession: Active session data received:', data);
         return { sessionId: data.sessionId, billId: data.billId, paymentStatus: data.paymentStatus as PaymentStatusFromApi };
       }
+
       if (data.sessionStatus === "Expired") {
         console.log('[AuthContext] createOrVerifyExternalSession: External API indicated session is "Expired" (in 2xx response).');
         setExternalSessionError(data.message || "Your previous session has expired.");
@@ -133,7 +143,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setIsAuthContextLoadingInternal(false);
     }
-  }, [restaurantIdFromEnv]);
+  }, [restaurantIdFromEnv, session, nextAuthUpdate]);
 
   useEffect(() => {
     if (sessionStatus === 'authenticated' && session?.user?.sessionId && !isLoggingOutRef.current) {
@@ -162,8 +172,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (!restaurantIdFromEnv) { 
         console.error('[AuthContext] validate: NEXT_PUBLIC_RESTAURANT_ID is not set. Cannot validate session.');
-        setExternalSessionError("Restaurant configuration error. Please try again later.");
         setIsSessionValidationLoading(false); 
+        setExternalSessionError("Restaurant configuration error. Please try again later.");
         if (!isLoggingOutRef.current) logout(); 
         return;
       }
@@ -204,12 +214,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             parsedValidationData = { message: `Session validation endpoint returned non-JSON. Status: ${validationResponse.status}` };
         }
 
-        setIsSessionValidationLoading(false); // Set loading false after API call, before processing
-
         if (!validationResponse.ok) {
           const errorStatus = validationResponse.status;
           const errorMessage = parsedValidationData.message || parsedValidationData.error || `Session validation failed (status ${errorStatus}). Please log in again.`;
           console.error('[AuthContext] validate: /api/session/check-status call failed. Status:', errorStatus, 'Parsed Data:', parsedValidationData);
+          
+          setIsSessionValidationLoading(false);
           setExternalSessionError(errorMessage);
           if (!isLoggingOutRef.current) logout(); 
           return; 
@@ -226,7 +236,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           console.log('[AuthContext] validate: Session is "Completed".');
           if (nextAuthPaymentStatus === "Confirmed") {
             console.log('[AuthContext] validate: Session "Completed" and NextAuth paymentStatus is "Confirmed". Allowing navigation to BillStatusPage.');
-            setExternalSessionError(null); // User just paid, allow them to see BillStatusPage.
+            setExternalSessionError(null);
           } else {
             setExternalSessionError(parsedValidationData.message || "This session is already completed. Please start a new one.");
             if (!isLoggingOutRef.current) logout();
@@ -247,10 +257,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (error: any) {
         console.error('[AuthContext] validate: Network or other error during /api/session/check-status call:', error);
         setExternalSessionError("Error validating session. Check connection or try logging in again.");
-        setIsSessionValidationLoading(false); 
         if (!isLoggingOutRef.current) logout();
-      } 
-      // Removed finally block for isSessionValidationLoading as it's set earlier
+      } finally {
+         setIsSessionValidationLoading(false); 
+         console.log('[AuthContext] validate: Finished validation attempt. Setting isSessionValidationLoading to false.');
+      }
     };
 
     if (sessionStatus === 'authenticated' && validateCurrentSessionTrigger > 0 && !isSessionValidationLoading && !isLoggingOutRef.current) {
@@ -265,7 +276,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionStatus, session, validateCurrentSessionTrigger, logout]); 
+  }, [sessionStatus, session, validateCurrentSessionTrigger, logout]); // Removed isSessionValidationLoading from deps
 
 
   const confirmPaymentExternal = useCallback(async (sessionIdToConfirm: string): Promise<boolean> => {
@@ -288,12 +299,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         throw new Error(data.message || data.error || `Failed to confirm payment. Status: ${response.status}`);
       }
       await nextAuthUpdate({ paymentStatus: data.paymentStatus || "Confirmed" });
-      setExternalSessionError(null); // Explicitly clear any prior error after successful confirmation
+      setExternalSessionError(null); 
       console.log("[AuthContext] Payment confirmed, NextAuth session paymentStatus updated to:", data.paymentStatus);
       return true;
     } catch (error: any) {
       console.error("[AuthContext] Error in confirmPaymentExternal:", error);
-      // Do not setExternalSessionError here generally, let the calling page handle specific errors from confirmPaymentExternal
       throw error; 
     } finally {
       setIsAuthContextLoadingInternal(false);
@@ -307,16 +317,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [sessionStatus, isSessionValidationLoading, isAuthContextLoadingInternal]);
 
   const finalIsAuthenticated = useMemo(() => {
-    // Check if NextAuth session exists and is authenticated, AND no overriding external error, AND not in validation loading
-    return sessionStatus === 'authenticated' && !!session?.user?.sessionId && !externalSessionError && !isSessionValidationLoading;
-  }, [sessionStatus, session?.user?.sessionId, externalSessionError, isSessionValidationLoading]);
+    return sessionStatus === 'authenticated' && !!session?.user?.sessionId && !externalSessionError;
+  }, [sessionStatus, session?.user?.sessionId, externalSessionError]);
   
 
   const currentSessionUser = session?.user;
 
   useEffect(() => {
-    console.log(`[AuthContext STATE UPDATE] isAuthenticated: ${finalIsAuthenticated}, isAuthContextLoading: ${finalIsAuthContextLoading}, externalSessionError: ${externalSessionError}, sessionStatus (NextAuth): ${sessionStatus}, isSessionValidationLoading: ${isSessionValidationLoading}`);
-  }, [finalIsAuthenticated, finalIsAuthContextLoading, externalSessionError, sessionStatus, isSessionValidationLoading]);
+    console.log(`[AuthContext STATE UPDATE] isAuthenticated: ${finalIsAuthenticated}, isAuthContextLoading: ${finalIsAuthContextLoading}, externalSessionError: ${externalSessionError}, sessionStatus (NextAuth): ${sessionStatus}, isSessionValidationLoading: ${isSessionValidationLoading}, PhoneNumber: ${currentSessionUser?.phoneNumber}`);
+  }, [finalIsAuthenticated, finalIsAuthContextLoading, externalSessionError, sessionStatus, isSessionValidationLoading, currentSessionUser?.phoneNumber]);
 
 
   return (
@@ -347,9 +356,3 @@ export const useAuth = () => {
   }
   return context;
 };
-    
-    
-
-    
-
-    
