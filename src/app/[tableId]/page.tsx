@@ -9,10 +9,10 @@ import MenuNavigationControls from '@/components/menu/MenuNavigationControls';
 import MenuContentDisplay from '@/components/menu/MenuContentDisplay';
 import SpecialRequestDialog from '@/components/menu/SpecialRequestDialog';
 import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
-import { Button } from '@/components/ui/button'; // Added for Try Again button
+import { Button } from '@/components/ui/button';
 
 import type { MenuItemType } from '@/types';
-import { Info, Loader2, AlertTriangle } from 'lucide-react'; 
+import { Info, Loader2, AlertTriangle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -28,28 +28,29 @@ export default function TablePage() {
   const tableIdFromUrl = params.tableId as string;
 
   const {
-    isAuthenticated, 
-    tableId: authTableId, 
-    billId: authBillId, 
-    sessionId: authSessionId, 
-    currentPaymentStatus, 
+    isAuthenticated,
+    tableId: authTableId,
+    billId: authBillId,
+    sessionId: authSessionId,
+    currentPaymentStatus,
     logout,
-    isAuthContextLoading, // This now includes NextAuth loading AND our custom session validation loading
-    externalSessionError, 
-    isSessionValidationLoading, // For more granular checks if needed, though isAuthContextLoading covers it
+    isAuthContextLoading,
+    externalSessionError,
+    // isSessionValidationLoading, // No longer directly used here, covered by isAuthContextLoading
   } = useAuth();
   const { getItemCount, getCartTotal, setIsCartSheetOpen } = useCart();
 
-  const [showLogin, setShowLogin] = useState(true); // Default to showing login until explicitly decided otherwise
+  const [showLogin, setShowLogin] = useState(true);
+  const [hasHadSuccessfulLogin, setHasHadSuccessfulLogin] = useState(false); // New state
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
 
-  const [menuItems, setMenuItems] = useState<MenuItemType[]>([]); 
-  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]); 
+  const [menuItems, setMenuItems] = useState<MenuItemType[]>([]);
+  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]);
 
   const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
-  const [isMenuLoading, setIsMenuLoading] = useState(true); // Loading for menu items specifically
+  const [isMenuLoading, setIsMenuLoading] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
 
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
@@ -60,31 +61,43 @@ export default function TablePage() {
 
   // Main effect to determine if login screen or menu should be shown
   useEffect(() => {
-    console.log(`[TablePage Effect] Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLogin: ${showLogin}`);
-    
-    if (isAuthContextLoading) {
-      console.log("[TablePage Effect] Auth context is loading (NextAuth or custom validation), returning early. Setting showLogin to true for safety.");
-      setShowLogin(true); // Ensure login is shown while any auth/session validation is pending
-      return;
+    console.log(`[TablePage Effect] Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLogin: ${showLogin}, HasHadSuccessfulLogin: ${hasHadSuccessfulLogin}`);
+
+    if (externalSessionError) {
+        console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Showing login, reset successful login flag.");
+        setShowLogin(true);
+        setHasHadSuccessfulLogin(false); // Reset on any overriding error
+        return;
     }
 
-    // After all loading is done:
-    if (externalSessionError) {
-      console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Showing login.");
-      setShowLogin(true); // Force login screen if there's an error (e.g. session expired, completed)
-    } else if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
-      console.log("[TablePage Effect] User authenticated for this table and no external error.");
-      if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') { 
-        console.log("[TablePage Effect] Bill is Confirmed/Completed. Forcing logout and showing login.");
-        logout(); // This will set isAuthenticated to false and likely externalSessionError
-        setShowLogin(true);
-      } else {
-        console.log("[TablePage Effect] Session active, bill not paid -> Showing menu (setShowLogin(false)).");
-        setShowLogin(false); // Proceed to show menu
-      }
+    if (isAuthContextLoading) {
+        console.log("[TablePage Effect] Auth context is loading.");
+        if (!hasHadSuccessfulLogin) {
+            console.log("[TablePage Effect] Auth loading AND no successful login yet -> Ensuring login is shown.");
+            setShowLogin(true);
+        }
+        // If auth is loading but we HAD a successful login, we don't flip back to login screen here
+        // unless it resolves to an externalSessionError (handled above).
+        // showLogin remains false, allowing "Loading Delicious Food..." or menu to show.
+        return;
+    }
+
+    // At this point, isAuthContextLoading is false, and externalSessionError is null.
+    if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
+        if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
+            console.log("[TablePage Effect] Bill is Confirmed/Completed. Forcing logout and showing login.");
+            logout();
+            setShowLogin(true);
+            setHasHadSuccessfulLogin(false);
+        } else {
+            console.log("[TablePage Effect] Session active, bill not paid -> Showing menu (setShowLogin(false)).");
+            setShowLogin(false); // User is authenticated and session is valid.
+        }
     } else {
-      console.log("[TablePage Effect] Not authenticated, or tableId mismatch, or missing session details -> Showing login.");
-      setShowLogin(true);
+        // Not authenticated, or tableId mismatch, or missing session details after loading and no error
+        console.log("[TablePage Effect] Conditions for showing menu not met (e.g., not authenticated, ID mismatch) -> Showing login.");
+        setShowLogin(true);
+        setHasHadSuccessfulLogin(false);
     }
   }, [
     isAuthenticated,
@@ -96,20 +109,19 @@ export default function TablePage() {
     isAuthContextLoading,
     externalSessionError,
     logout,
-    showLogin // Added showLogin to dep array as its change might influence re-evaluation
+    hasHadSuccessfulLogin // Added dependency
   ]);
 
 
   // Effect for initial menu (categories + sample items) load OR if showLogin becomes false
   useEffect(() => {
-    // Only fetch menu if not showing login AND auth context is NOT loading
-    if (!showLogin && !isAuthContextLoading) { 
+    if (!showLogin && !isAuthContextLoading) {
       const fetchInitialMenu = async () => {
         console.log("[TablePage InitialMenuFetch] Conditions met. Fetching initial menu (categories and sample items)...");
         setIsMenuLoading(true);
         setMenuError(null);
         try {
-          const response = await fetch('/api/menu', { cache: 'no-store' }); 
+          const response = await fetch('/api/menu', { cache: 'no-store' });
           console.log("[TablePage InitialMenuFetch] /api/menu response status:", response.status);
           if (!response.ok) {
             const errorText = await response.text();
@@ -118,17 +130,17 @@ export default function TablePage() {
           }
           const data = await response.json();
           console.log("[TablePage InitialMenuFetch] /api/menu data received:", data);
-          const sampleItems = data.menuItems || localSampleMenuData; 
+          const sampleItems = data.menuItems || localSampleMenuData;
           setInitialSampleMenuItems(sampleItems);
-          setMenuItems(sampleItems); 
-          setFetchedCategories(data.categories || []); 
+          setMenuItems(sampleItems);
+          setFetchedCategories(data.categories || []);
           console.log("[TablePage InitialMenuFetch] Initial menu data set. Categories:", data.categories, "Sample items count:", sampleItems.length);
         } catch (error: any) {
           console.error("[TablePage InitialMenuFetch] Error fetching initial menu:", error.message);
           setMenuError(error.message || 'Could not load initial menu.');
-          setInitialSampleMenuItems(localSampleMenuData); 
+          setInitialSampleMenuItems(localSampleMenuData);
           setMenuItems(localSampleMenuData);
-          setFetchedCategories([]); 
+          setFetchedCategories([]);
         } finally {
           setIsMenuLoading(false);
           console.log("[TablePage InitialMenuFetch] Finished initial menu fetch. isMenuLoading:", false);
@@ -138,40 +150,40 @@ export default function TablePage() {
     } else {
       console.log(`[TablePage InitialMenuFetch] Skipped: showLogin: ${showLogin}, isAuthContextLoading: ${isAuthContextLoading}`);
     }
-  }, [showLogin, isAuthContextLoading]); // Depends on showLogin and overall auth loading
+  }, [showLogin, isAuthContextLoading]);
 
   // Welcome message animation
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (!showLogin) { // Only show welcome if menu is shown
+    if (!showLogin) {
       setShowWelcomeMessage(true);
       timer = setTimeout(() => setShowWelcomeMessage(false), 1500);
     } else {
-      setShowWelcomeMessage(false); // Hide if login is shown
+      setShowWelcomeMessage(false);
     }
     return () => clearTimeout(timer);
   }, [showLogin]);
 
   const categoryDetails = useMemo(() => {
     return fetchedCategories
-      .map(cat => { 
+      .map(cat => {
         const itemsInCategory = initialSampleMenuItems.filter(item => item.category === cat.name);
         const IconComponent = LucideIcons[cat.iconName as keyof typeof LucideIcons] || Info;
         let dataAiHint = 'food category';
         if (cat.name === 'Starters') { dataAiHint = 'appetizers selection'; }
         else if (cat.name === 'Mains') { dataAiHint = 'hearty meals'; }
         else if (cat.name === 'Drinks') { dataAiHint = 'refreshing beverages'; }
-        else if (cat.iconName === 'Popcorn') { dataAiHint = 'snacks popcorn';} // Assuming Popcorn is a valid Lucide icon string
-        return { 
-          name: cat.name, icon: IconComponent, itemCount: itemsInCategory.length, 
-          imageUrl: `https://placehold.co/320x180.png`, dataAiHint 
+        else if (cat.iconName === 'Popcorn') { dataAiHint = 'snacks popcorn';}
+        return {
+          name: cat.name, icon: IconComponent, itemCount: itemsInCategory.length,
+          imageUrl: `https://placehold.co/320x180.png`, dataAiHint
         };
       })
-      .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name)); 
+      .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name));
   }, [initialSampleMenuItems, fetchedCategories]);
 
   const displayedItems = useMemo(() => {
-    let itemsToDisplay = menuItems; 
+    let itemsToDisplay = menuItems;
     if (searchTerm) {
       itemsToDisplay = itemsToDisplay.filter(item =>
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -179,7 +191,7 @@ export default function TablePage() {
       );
     }
     return itemsToDisplay;
-  }, [searchTerm, menuItems]); 
+  }, [searchTerm, menuItems]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
@@ -189,14 +201,14 @@ export default function TablePage() {
     console.log("[TablePage Actions] Clearing selection and search. Resetting menuItems to initial samples.");
     setSelectedCategory(null);
     setSearchTerm("");
-    setMenuItems(initialSampleMenuItems); 
-    setMenuError(null); 
+    setMenuItems(initialSampleMenuItems);
+    setMenuError(null);
   }, [initialSampleMenuItems]);
 
   const handleCategorySelect = useCallback(async (categoryName: string) => {
     console.log(`[TablePage CategorySelect] Category selected: ${categoryName}. Fetching items...`);
     setSelectedCategory(categoryName);
-    setSearchTerm(""); 
+    setSearchTerm("");
     setIsMenuLoading(true);
     setMenuError(null);
     try {
@@ -204,7 +216,7 @@ export default function TablePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ categoryName }),
-        cache: 'no-store', 
+        cache: 'no-store',
       });
       console.log(`[TablePage CategorySelect] Response status from /api/menu/items for ${categoryName}: ${response.status}`);
 
@@ -214,13 +226,13 @@ export default function TablePage() {
         throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
       }
       const data: MenuItemType[] = await response.json();
-      console.log(`[TablePage CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3)); 
-      setMenuItems(data); 
+      console.log(`[TablePage CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3));
+      setMenuItems(data);
       console.log(`[TablePage CategorySelect] menuItems state updated with ${data.length} items from API.`);
     } catch (error: any) {
       console.error(`[TablePage CategorySelect] Catch block error for ${categoryName}:`, error.message);
       setMenuError(error.message);
-      setMenuItems([]); 
+      setMenuItems([]);
     } finally {
       setIsMenuLoading(false);
       console.log(`[TablePage CategorySelect] Finished fetching for ${categoryName}. isMenuLoading: false`);
@@ -239,9 +251,10 @@ export default function TablePage() {
       </div>
     );
   }
-  
-  // Auth Context Loading (NextAuth or custom session validation)
-  if (isAuthContextLoading) {
+
+  // Auth Context Loading (NextAuth or custom session validation OR createSession)
+  // Show "Initializing session..." only if login flow hasn't successfully completed yet.
+  if (isAuthContextLoading && !hasHadSuccessfulLogin) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -252,13 +265,19 @@ export default function TablePage() {
 
   // If showLogin is true (due to failed auth, external error, or initial state before auth completes)
   if (showLogin) {
-    // LoginFlow component already handles displaying externalSessionError if present
-    return <LoginFlow tableIdFromUrl={tableIdFromUrl} onLoginSuccess={() => { console.log("[LoginFlow Success] onLoginSuccess called, page effect will re-evaluate."); }} />;
+    return <LoginFlow
+              tableIdFromUrl={tableIdFromUrl}
+              onLoginSuccess={() => {
+                console.log("[LoginFlow Success] onLoginSuccess called, setting hasHadSuccessfulLogin to true.");
+                setHasHadSuccessfulLogin(true);
+              }}
+            />;
   }
 
   // Menu loading state (after successful auth & session validation, and showLogin is false)
-  if (isMenuLoading && menuItems.length === 0 && !menuError) { 
-    const loadingMessage = selectedCategory ? `Loading ${selectedCategory}...` : "Loading menu...";
+  // This is where "Loading Delicious Food..." should appear.
+  if (isMenuLoading && menuItems.length === 0 && !menuError) {
+    const loadingMessage = selectedCategory ? `Loading ${selectedCategory}...` : "Loading Delicious Food...";
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -291,3 +310,4 @@ export default function TablePage() {
     </div>
   );
 }
+
