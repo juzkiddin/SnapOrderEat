@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, LogOut, RefreshCw } from 'lucide-react'; // Added RefreshCw
+import { Loader2, LogOut, RefreshCw } from 'lucide-react';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 
 type LoginStep = "enterWaiterOtp" | "enterPhone" | "verifyPhoneOtp" | "sessionStatusInfo";
@@ -26,7 +26,6 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   const [phoneNumber, setPhoneNumber] = useState("");
   const [enteredSmsOtp, setEnteredSmsOtp] = useState("");
   
-  // Error state for OTP/API issues during the flow, separate from authContext.externalSessionError
   const [flowError, setFlowError] = useState<string | null>(null); 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -46,11 +45,9 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   const router = useRouter();
 
   useEffect(() => {
-    // Clear flow error if auth context has an external session error (e.g. "Expired")
-    // This allows the auth context error to be the primary message shown.
     if (authContext.externalSessionError) {
         setFlowError(null);
-        if (step !== "sessionStatusInfo") { // If not already showing session status
+        if (step !== "sessionStatusInfo") { 
           setStep("sessionStatusInfo");
         }
     }
@@ -97,7 +94,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     if (isOtpGenerationRequestInFlight.current && !isRetry) return;
     isOtpGenerationRequestInFlight.current = true;
     setFlowError(null);
-    authContext.clearExternalSessionError(); // Clear session error for new attempt
+    authContext.clearExternalSessionError(); 
     if (!isRetry) setWaiterOtpAttemptsLeft(null);
     setIsLoading(true);
     try {
@@ -184,37 +181,44 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
 
     const externalSessionResult = await authContext.createOrVerifyExternalSession(formattedPhoneNumber, tableIdFromUrl);
 
-    if (authContext.externalSessionError || (externalSessionResult && 'sessionStatus' in externalSessionResult && externalSessionResult.sessionStatus === "Expired")) {
-        // Error or "Expired" status is handled by authContext.externalSessionError,
-        // LoginFlow will switch to sessionStatusInfo step via useEffect.
+    if (authContext.externalSessionError || !externalSessionResult || ('sessionStatus' in externalSessionResult && externalSessionResult.sessionStatus !== "Active") ) {
+        console.log("[LoginFlow] createOrVerifyExternalSession failed or returned non-active. AuthContext error:", authContext.externalSessionError, "Result:", externalSessionResult);
+        if (!authContext.externalSessionError) { // If AuthContext didn't set the error, set it locally in LoginFlow
+            const messageFromServer = externalSessionResult && 'message' in externalSessionResult ? externalSessionResult.message : null;
+            setFlowError(messageFromServer || "Session creation or verification failed.");
+        }
+        // If authContext.externalSessionError IS set, the useEffect in LoginFlow will pick it up and switch to sessionStatusInfo.
         setIsLoading(false);
         return; 
     }
 
-    if (externalSessionResult && 'sessionId' in externalSessionResult) {
-      const { sessionId, billId, paymentStatus } = externalSessionResult;
-      console.log("[LoginFlow] External session active. Proceeding to NextAuth signIn with:", { sessionId, billId, paymentStatus });
-      const signInResult = await signIn('credentials', {
-        redirect: false,
-        phoneNumber: formattedPhoneNumber,
-        tableId: tableIdFromUrl,
-        billId,
-        sessionId,
-        paymentStatus,
-      });
-
-      if (signInResult?.error) {
-        setFlowError(`Login failed: ${signInResult.error}.`);
-      } else if (!signInResult?.ok) {
-        setFlowError("Login attempt was not successful.");
-      } else {
-        onLoginSuccess(); // This will trigger AuthContext update via useSession
-      }
-    } else {
-      // This case should ideally be caught by authContext.externalSessionError
-      setFlowError(authContext.externalSessionError || "Failed to get session details from server.");
+    if (!('sessionId' in externalSessionResult)) {
+        console.error("[LoginFlow] externalSessionResult is not of type ExternalSessionData", externalSessionResult);
+        setFlowError("Invalid session data from server after create/verify step.");
+        setIsLoading(false);
+        return;
     }
-    setIsLoading(false);
+
+    const { sessionId, billId, paymentStatus } = externalSessionResult;
+    console.log("[LoginFlow] External session active. Proceeding to NextAuth signIn with:", { sessionId, billId, paymentStatus });
+    const signInResult = await signIn('credentials', {
+      redirect: false,
+      phoneNumber: formattedPhoneNumber,
+      tableId: tableIdFromUrl,
+      billId,
+      sessionId,
+      paymentStatus,
+    });
+
+    setIsLoading(false); // Ensure isLoading is set to false after signIn attempt
+
+    if (signInResult?.error) {
+      setFlowError(`Login failed: ${signInResult.error}.`);
+    } else if (!signInResult?.ok) {
+      setFlowError("Login attempt was not successful.");
+    } else {
+      onLoginSuccess(); 
+    }
   };
 
 
@@ -234,27 +238,21 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       if (!verifySmsResponse.ok) { setFlowError(verifySmsData.message || verifySmsData.error || `SMS OTP verification failed (status: ${verifySmsResponse.status})`); setIsLoading(false); return; }
       if (verifySmsData.success !== true) { setFlowError(verifySmsData.message || "Invalid SMS OTP."); setIsLoading(false); return; }
       
-      // SMS OTP verified, now create/verify external session and then sign in to NextAuth
       const formattedPhoneNumber = `+91${phoneNumber}`;
       await processExternalSessionAndSignIn(formattedPhoneNumber);
 
     } catch (err: any) {
       setFlowError(err.message || "Error verifying SMS OTP.");
-    } finally { 
-      // setIsLoading(false) is handled by processExternalSessionAndSignIn or error cases above
+      setIsLoading(false); // Ensure loading is false in catch block too
     }
   };
   
   const handleStartNewSession = () => {
     setFlowError(null);
     authContext.clearExternalSessionError();
-    // Decide if we need to go all the way back to waiter OTP or just re-attempt /session/createsession
-    // For simplicity, let's assume we re-verify phone and then try createsession again.
-    // Or, if /session/createsession is meant to be the single point of entry after mobileNum is known:
     if (phoneNumber) {
         processExternalSessionAndSignIn(`+91${phoneNumber}`);
     } else {
-        // This state shouldn't be reachable if phone number was needed to get to "Expired"
         setStep("enterPhone"); 
     }
   };
@@ -277,7 +275,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
             </>
           );
         }
-        return ( /* Enter Waiter OTP sub-step */
+        return ( 
           <>
             <CardHeader><CardTitle className="text-2xl text-center">Enter Waiter OTP</CardTitle>
               <CardDescription className="text-center">Enter 6-digit OTP from waiter.
@@ -337,7 +335,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
             </CardFooter>
           </>
         );
-      case "sessionStatusInfo": // New step to display messages like "Expired session"
+      case "sessionStatusInfo": 
         return (
           <>
             <CardHeader><CardTitle className="text-2xl text-center">Session Status</CardTitle></CardHeader>
@@ -368,3 +366,4 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     </div>
   );
 }
+
