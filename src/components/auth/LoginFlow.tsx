@@ -46,8 +46,10 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
 
   useEffect(() => {
     if (authContext.externalSessionError) {
-        setFlowError(null);
+        console.log("[LoginFlow Effect] AuthContext has externalSessionError:", authContext.externalSessionError);
+        setFlowError(null); // Clear local flow error if global one appears
         if (step !== "sessionStatusInfo") { 
+          console.log("[LoginFlow Effect] Switching to sessionStatusInfo due to externalSessionError.");
           setStep("sessionStatusInfo");
         }
     }
@@ -71,7 +73,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   };
 
   const startReRequestWaiterOtpTimer = () => {
-    setReRequestWaiterOtpCountdown(240);
+    setReRequestWaiterOtpCountdown(240); // 4 minutes
     if (reRequestWaiterIntervalRef.current) clearInterval(reRequestWaiterIntervalRef.current);
     reRequestWaiterIntervalRef.current = setInterval(() => {
       setReRequestWaiterOtpCountdown((prev) => (prev <= 1 ? (clearInterval(reRequestWaiterIntervalRef.current!), 0) : prev - 1));
@@ -95,7 +97,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     isOtpGenerationRequestInFlight.current = true;
     setFlowError(null);
     authContext.clearExternalSessionError(); 
-    if (!isRetry) setWaiterOtpAttemptsLeft(null);
+    if (!isRetry) setWaiterOtpAttemptsLeft(null); // Reset attempts only on first try
     setIsLoading(true);
     try {
       const apiResponse = await fetch('https://otpapi.snapordereat.in/otp/generate', {
@@ -103,15 +105,15 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       });
       logRateLimitHeaders(apiResponse, "Waiter OTP Gen");
       const data = await apiResponse.json();
-      if (apiResponse.status === 429) setFlowError(`Rate limit exceeded. Try again in ${apiResponse.headers.get('retry-after') || '30'}s.`);
-      else if (!apiResponse.ok) setFlowError(data.message || data.error || `OTP generation failed: ${apiResponse.status}`);
+      if (apiResponse.status === 429) { setFlowError(`Rate limit exceeded. Try again in ${apiResponse.headers.get('retry-after') || '30'}s.`); }
+      else if (!apiResponse.ok) { setFlowError(data.message || data.error || `OTP generation failed: ${apiResponse.status}`); }
       else {
         setWaiterApiUuid(data.uuid);
-        setWaiterOtpAttemptsLeft(data.attemptsLeft === undefined ? null : Number(data.attemptsLeft));
+        setWaiterOtpAttemptsLeft(data.attemptsLeft === undefined ? null : Number(data.attemptsLeft)); // Ensure it's a number or null
         setWaiterOtpSubStep("enterOtp");
         setFlowError(null);
-        if (isRetry) setWaiterOtp("");
-        startReRequestWaiterOtpTimer();
+        if (isRetry) setWaiterOtp(""); // Clear OTP input field on retry
+        startReRequestWaiterOtpTimer(); // Start timer on successful OTP generation (initial or retry)
       }
     } catch (err: any) {
       setFlowError(err.message || "Error requesting Waiter OTP.");
@@ -138,6 +140,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       } else if (data.success === true) {
         setFlowError(null); setStep("enterPhone");
       } else {
+        // Verification technically "ok" (200) but success: false (e.g., wrong OTP)
         if (data.attemptsLeft !== undefined) setWaiterOtpAttemptsLeft(Number(data.attemptsLeft));
         setFlowError(data.message || "Invalid Waiter OTP.");
       }
@@ -147,7 +150,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
   };
 
   const handleSendSmsOtp = async () => {
-    if (isSmsOtpGenerationRequestInFlight.current) return;
+    if (isSmsOtpGenerationRequestInFlight.current) return; // Prevent multiple requests
     if (!/^\d{10}$/.test(phoneNumber)) { setFlowError("Enter a valid 10-digit phone number."); return; }
     isSmsOtpGenerationRequestInFlight.current = true;
     setFlowError(null);
@@ -160,10 +163,10 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       });
       logRateLimitHeaders(response, "SMS OTP Gen");
       const data = await response.json();
-      if (response.status === 400) setFlowError(data.message?.[0] || data.error || "Invalid mobile number.");
-      else if (response.status === 429) setFlowError(`Too many requests for SMS OTP. Try again in ${response.headers.get('retry-after') || '30'}s.`);
-      else if (response.status === 500) setFlowError(data.message || "Failed to send SMS OTP.");
-      else if (!response.ok) setFlowError(data.message || data.error || `SMS OTP generation failed: ${response.status}`);
+      if (response.status === 400) { setFlowError(data.message?.[0] || data.error || "Invalid mobile number."); }
+      else if (response.status === 429) { setFlowError(`Too many requests for SMS OTP. Try again in ${response.headers.get('retry-after') || '30'}s.`); }
+      else if (response.status === 500) { setFlowError(data.message || "Failed to send SMS OTP."); } // External API internal error
+      else if (!response.ok) { setFlowError(data.message || data.error || `SMS OTP generation failed: ${response.status}`); }
       else {
         setSmsOtpUuid(data.uuid); setStep("verifyPhoneOtp"); startResendSmsOtpTimer(); setFlowError(null);
       }
@@ -179,35 +182,43 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     setFlowError(null); 
     authContext.clearExternalSessionError();
 
+    console.log("[LoginFlow] processExternalSessionAndSignIn: Calling createOrVerifyExternalSession...");
     const externalSessionResult = await authContext.createOrVerifyExternalSession(formattedPhoneNumber, tableIdFromUrl);
+    console.log("[LoginFlow] processExternalSessionAndSignIn: Result from createOrVerifyExternalSession:", externalSessionResult);
 
+
+    // Check if AuthContext set an error OR if the result indicates a non-active session
     if (authContext.externalSessionError || !externalSessionResult || ('sessionStatus' in externalSessionResult && externalSessionResult.sessionStatus !== "Active") ) {
-        console.log("[LoginFlow] createOrVerifyExternalSession failed or returned non-active. AuthContext error:", authContext.externalSessionError, "Result:", externalSessionResult);
-        if (!authContext.externalSessionError) { // If AuthContext didn't set the error, set it locally in LoginFlow
-            const messageFromServer = externalSessionResult && 'message' in externalSessionResult ? externalSessionResult.message : null;
-            setFlowError(messageFromServer || "Session creation or verification failed.");
+        console.log("[LoginFlow] processExternalSessionAndSignIn: createOrVerifyExternalSession failed or returned non-active. AuthContext error:", authContext.externalSessionError, "Result:", externalSessionResult);
+        if (!authContext.externalSessionError && externalSessionResult && 'message' in externalSessionResult) { 
+            setFlowError(externalSessionResult.message || "Session creation or verification failed.");
         }
         // If authContext.externalSessionError IS set, the useEffect in LoginFlow will pick it up and switch to sessionStatusInfo.
         setIsLoading(false);
-        return; 
+        return; // Critical: Do not proceed to signIn or onLoginSuccess
     }
 
+    // Ensure the result is of type ExternalSessionData before trying to access its properties
     if (!('sessionId' in externalSessionResult)) {
-        console.error("[LoginFlow] externalSessionResult is not of type ExternalSessionData", externalSessionResult);
+        console.error("[LoginFlow] processExternalSessionAndSignIn: externalSessionResult is not of type ExternalSessionData", externalSessionResult);
         setFlowError("Invalid session data from server after create/verify step.");
         setIsLoading(false);
-        return;
+        return; // Critical: Do not proceed
     }
 
     const { sessionId, billId, paymentStatus } = externalSessionResult;
-    console.log("[LoginFlow] External session active. Proceeding to NextAuth signIn with:", { sessionId, billId, paymentStatus });
+    console.log("[LoginFlow] processExternalSessionAndSignIn: External session active. Proceeding to NextAuth signIn with:", { sessionId, billId, paymentStatus });
+    
+    // Log the paymentStatus being passed to signIn
+    console.log("[LoginFlow] PaymentStatus being passed to NextAuth signIn:", paymentStatus);
+
     const signInResult = await signIn('credentials', {
       redirect: false,
       phoneNumber: formattedPhoneNumber,
       tableId: tableIdFromUrl,
       billId,
       sessionId,
-      paymentStatus,
+      paymentStatus, // Make sure this is correctly passed
     });
 
     setIsLoading(false); // Ensure isLoading is set to false after signIn attempt
@@ -217,6 +228,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
     } else if (!signInResult?.ok) {
       setFlowError("Login attempt was not successful.");
     } else {
+      console.log("[LoginFlow] processExternalSessionAndSignIn: NextAuth signIn successful. Calling onLoginSuccess.");
       onLoginSuccess(); 
     }
   };
@@ -238,6 +250,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       if (!verifySmsResponse.ok) { setFlowError(verifySmsData.message || verifySmsData.error || `SMS OTP verification failed (status: ${verifySmsResponse.status})`); setIsLoading(false); return; }
       if (verifySmsData.success !== true) { setFlowError(verifySmsData.message || "Invalid SMS OTP."); setIsLoading(false); return; }
       
+      // SMS OTP verification success, now proceed with external session and NextAuth signIn
       const formattedPhoneNumber = `+91${phoneNumber}`;
       await processExternalSessionAndSignIn(formattedPhoneNumber);
 
@@ -245,14 +258,19 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
       setFlowError(err.message || "Error verifying SMS OTP.");
       setIsLoading(false); // Ensure loading is false in catch block too
     }
+    // Do not set isLoading(false) here if processExternalSessionAndSignIn is async and handles its own loading
   };
   
   const handleStartNewSession = () => {
     setFlowError(null);
     authContext.clearExternalSessionError();
     if (phoneNumber) {
+        // User is already on sessionStatusInfo, likely due to an expired session.
+        // Try to create a new session with their existing phone number.
         processExternalSessionAndSignIn(`+91${phoneNumber}`);
     } else {
+        // If no phone number stored (shouldn't happen if sessionStatusInfo is shown due to *their* session expiring),
+        // send them back to enter phone. More robustly, might send to Waiter OTP.
         setStep("enterPhone"); 
     }
   };
@@ -275,6 +293,7 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
             </>
           );
         }
+        // waiterOtpSubStep === "enterOtp"
         return ( 
           <>
             <CardHeader><CardTitle className="text-2xl text-center">Enter Waiter OTP</CardTitle>
@@ -341,12 +360,15 @@ export default function LoginFlow({ tableIdFromUrl, onLoginSuccess }: LoginFlowP
             <CardHeader><CardTitle className="text-2xl text-center">Session Status</CardTitle></CardHeader>
             <CardContent><p className="text-muted-foreground text-center">{authContext.externalSessionError || "There was an issue with your session."}</p></CardContent>
             <CardFooter className="flex flex-col gap-2">
-                { authContext.externalSessionError?.toLowerCase().includes("expired") && (
+                {/* Show "Start New Session" only if it's a recoverable/expected error like "Expired" or "Completed" */}
+                { (authContext.externalSessionError?.toLowerCase().includes("expired") || 
+                   authContext.externalSessionError?.toLowerCase().includes("completed")) && (
                     <Button onClick={handleStartNewSession} className="w-full" disabled={isLoading || authContext.isAuthContextLoading}>
                         {(isLoading || authContext.isAuthContextLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         <RefreshCw className="mr-2 h-4 w-4" /> Start New Session
                     </Button>
                 )}
+                {/* Always show a way to go back/reset */}
                 <Button variant="outline" onClick={() => { setStep("enterWaiterOtp"); setWaiterOtpSubStep("initialInstruction"); authContext.clearExternalSessionError(); setFlowError(null); authContext.logout(); router.push('/') }} className="w-full">
                   Go to Home / Logout
                 </Button>
