@@ -16,94 +16,95 @@ export default function BillStatusPage() {
   const router = useRouter();
   const billIdFromUrl = params.billId as string;
   const { toast } = useToast();
-  
-  const { 
-    isAuthenticated, 
+
+  const {
+    isAuthenticated,
     billId: authBillId,
-    sessionId: authSessionId,
+    sessionId: authSessionId, // Used for the new checkAndUpdateSessionStatus
     tableId,
-    phoneNumber, // Added
     currentPaymentStatus,
     isAuthContextLoading,
     logout,
-    createOrVerifyExternalSession // Added
+    checkAndUpdateSessionStatus, // New function from AuthContext
+    externalSessionError // To react to logout triggered by AuthContext
   } = useAuth();
-  
+
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
 
   useEffect(() => {
     if (!billIdFromUrl) {
-      router.replace('/'); 
+      router.replace('/');
       return;
     }
 
     if (isAuthContextLoading) {
-      return;
+      return; // Wait for auth context to settle
     }
 
-    if (!isAuthenticated || !authSessionId || (authBillId && authBillId !== billIdFromUrl)) {
+    // If externalSessionError is set, AuthContext might have initiated logout
+    // or detected an issue that makes current session invalid.
+    if (externalSessionError || !isAuthenticated || !authSessionId || (authBillId && authBillId !== billIdFromUrl)) {
+      console.log(`[BillStatusPage Effect] Redirecting due to: externalError: ${externalSessionError}, !isAuthenticated: ${!isAuthenticated}, !authSessionId: ${!authSessionId}, billId mismatch: ${authBillId !== billIdFromUrl}`);
       router.replace(tableId ? `/${tableId}` : '/');
     }
   }, [
-    isAuthenticated, 
-    authBillId, 
+    isAuthenticated,
+    authBillId,
     authSessionId,
-    billIdFromUrl, 
-    router, 
-    logout, 
+    billIdFromUrl,
+    router,
     tableId,
-    isAuthContextLoading
+    isAuthContextLoading,
+    externalSessionError // Added dependency
   ]);
 
   const handleExitOrNewOrder = () => {
-    if (currentPaymentStatus === 'Confirmed') {
-      logout(); 
-      router.push(tableId ? `/${tableId}` : '/'); 
-    } else {
-      router.push(tableId ? `/${tableId}` : '/'); 
-    }
+    logout(); // AuthContext's logout handles NextAuth signOut and state resets
+    router.push(tableId ? `/${tableId}` : '/');
   };
 
   const handleVerifyPayment = useCallback(async () => {
-    if (!phoneNumber || !tableId) {
-      toast({ title: "Error", description: "User or table details not found. Cannot verify.", variant: "destructive" });
+    if (!authSessionId || !tableId) {
+      toast({ title: "Error", description: "Session or table details not found. Cannot verify.", variant: "destructive" });
       return;
     }
     setIsVerifyingPayment(true);
     try {
-      // createOrVerifyExternalSession in AuthContext is now enhanced to call nextAuthUpdate if session matches
-      const sessionData = await createOrVerifyExternalSession(phoneNumber, tableId);
-      
-      // AuthContext's successful call to createOrVerifyExternalSession (if session matches)
-      // will trigger a nextAuthUpdate, which will then update the `currentPaymentStatus` from useAuth().
-      // The page re-renders, and the UI will reflect the new status.
-      // We just show a toast if it's still pending after the check.
-      if (sessionData && 'paymentStatus' in sessionData) {
-        if (sessionData.paymentStatus === 'Pending') {
-          toast({ 
-            title: "Payment Status", 
+      console.log(`[BillStatusPage] Calling checkAndUpdateSessionStatus with SID: ${authSessionId}, TID: ${tableId}`);
+      const result = await checkAndUpdateSessionStatus(authSessionId, tableId);
+      console.log(`[BillStatusPage] Result from checkAndUpdateSessionStatus:`, result);
+
+      if (result) {
+        if (!result.success && result.message) {
+           toast({ title: "Verification Info", description: result.message, variant: result.sessionStatus === "NotFound" || result.sessionStatus === "Expired" ? "destructive" : "default" });
+        } else if (result.success && result.paymentStatus === 'Pending') {
+          toast({
+            title: "Payment Status",
             description: "Payment is not yet confirmed. Please check with the Waiter.",
-            duration: 5000 
+            duration: 5000
           });
         }
-        // If sessionData.paymentStatus is 'Confirmed', the page will re-render
-        // and show the "Payment Confirmed!" state automatically.
-      } else if (sessionData && 'sessionStatus' in sessionData && sessionData.sessionStatus !== 'Active') {
-        // Handle cases like "Expired", "Completed" returned by createOrVerify if it couldn't establish an active session.
-        // AuthContext will likely handle logout in these scenarios.
-        toast({ title: "Session Issue", description: sessionData.message || "Could not re-verify session.", variant: "destructive" });
-      } else if (!sessionData) {
-        toast({ title: "Verification Error", description: "Failed to verify payment status. No response from server.", variant: "destructive" });
+        // If result.paymentStatus is 'Confirmed', AuthContext's update of NextAuth session
+        // will cause `currentPaymentStatus` from `useAuth()` to change,
+        // and this component will re-render, showing the success state.
+        // If result.sessionStatus led to AuthContext calling logout(), the useEffect above handles redirection.
+      } else {
+         // This case means checkAndUpdateSessionStatus returned null, likely indicating a network error
+         // or an internal error within AuthContext before/after the API call.
+         // externalSessionError in AuthContext should be set.
+        toast({ title: "Verification Error", description: "Failed to get payment status. Please try again.", variant: "destructive" });
       }
     } catch (error: any) {
+      // This catch is for unexpected errors from checkAndUpdateSessionStatus if it throws.
+      console.error("[BillStatusPage] Error calling checkAndUpdateSessionStatus:", error);
       toast({ title: "Verification Error", description: error.message || "An error occurred while verifying payment status.", variant: "destructive" });
     } finally {
       setIsVerifyingPayment(false);
     }
-  }, [phoneNumber, tableId, createOrVerifyExternalSession, toast]);
+  }, [authSessionId, tableId, checkAndUpdateSessionStatus, toast]);
 
 
-  if (isAuthContextLoading || (!isAuthenticated && !isAuthContextLoading)) {
+  if (isAuthContextLoading || (!isAuthenticated && !isAuthContextLoading && !externalSessionError)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -112,7 +113,23 @@ export default function BillStatusPage() {
     );
   }
 
+  // If externalSessionError is present AFTER loading, it implies a problem that should lead to redirection (handled by useEffect) or an error display
+  // This might be redundant if useEffect handles redirection correctly, but can act as a fallback.
+  if (externalSessionError && !isAuthContextLoading) {
+     return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
+        <AlertCircle className="h-16 w-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-semibold mb-2">Session Issue</h1>
+        <p className="text-muted-foreground mb-6">{externalSessionError}</p>
+        <Button onClick={() => router.push(tableId ? `/${tableId}` : '/')}>Go to Menu</Button>
+      </div>
+    );
+  }
+
+
   if (!authBillId || billIdFromUrl !== authBillId) {
+    // This case should ideally be caught by the main useEffect redirecting.
+    // Kept as a safeguard if redirection logic in useEffect isn't immediate.
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <AlertCircle className="h-16 w-16 text-destructive mb-4" />
@@ -131,14 +148,14 @@ export default function BillStatusPage() {
 
   let ActionButton: React.ReactNode;
 
-  switch (currentPaymentStatus as PaymentStatusFromApi) {
+  switch (currentPaymentStatus) { // No 'as PaymentStatusFromApi' needed if type is already correct
     case 'Pending':
       StatusIcon = Clock;
       statusTitle = "Bill Requested / Payment Pending";
       statusDescription = "Your bill is active. You can verify payment or proceed to checkout.";
       iconClass = "text-yellow-500";
       ActionButton = (
-        <Button onClick={handleVerifyPayment} className="w-full text-lg py-6" disabled={isVerifyingPayment || !phoneNumber || !tableId}>
+        <Button onClick={handleVerifyPayment} className="w-full text-lg py-6" disabled={isVerifyingPayment || !authSessionId || !tableId}>
           {isVerifyingPayment ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <RefreshCw className="mr-2 h-5 w-5" />}
           Verify Payment Status
         </Button>
@@ -170,7 +187,7 @@ export default function BillStatusPage() {
     case 'NotCompleted':
       StatusIcon = AlertCircle;
       statusTitle = currentPaymentStatus === 'Expired' ? "Session Expired" : "Session Not Completed";
-      statusDescription = currentPaymentStatus === 'Expired' 
+      statusDescription = currentPaymentStatus === 'Expired'
         ? "This session has expired. Please start a new one from the table page."
         : "This session was not completed. Please start a new one if you wish to order.";
       iconClass = "text-orange-500";
@@ -180,7 +197,7 @@ export default function BillStatusPage() {
         </Button>
       );
       break;
-    default:
+    default: // Catches null or any other unexpected status
       StatusIcon = Loader2;
       iconClass = "animate-spin text-muted-foreground";
       statusTitle = "Loading Status...";
