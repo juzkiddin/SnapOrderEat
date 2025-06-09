@@ -42,7 +42,13 @@ export default function Cart() {
     isCartSheetOpen,
     setIsCartSheetOpen
   } = useCart();
-  const { billId, isAuthenticated, tableId, currentPaymentStatus } = useAuth(); // Added currentPaymentStatus
+  const { 
+    billId, 
+    isAuthenticated, 
+    tableId, 
+    currentPaymentStatus, 
+    hasExplicitlyRequestedBill // Added from AuthContext
+  } = useAuth();
   const { 
     addOrder, 
     getOrdersByBillId, 
@@ -51,7 +57,7 @@ export default function Cart() {
     error: ordersError 
   } = useOrders();
   const router = useRouter();
-  const { toast } = useToast(); // Added
+  const { toast } = useToast();
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
   const currentCartTotal = getCartTotal();
@@ -83,11 +89,11 @@ export default function Cart() {
       return;
     }
 
-    // Check if payment is pending
-    if (currentPaymentStatus === 'Pending') {
+    // Check if payment is pending AND user explicitly requested bill
+    if (currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill) {
       toast({
         title: "Order Blocked",
-        description: "Bill requested from waiter. Please complete the current payment to reorder.",
+        description: "Bill requested. Please complete the current payment to reorder.",
         variant: "destructive",
         duration: 5000,
       });
@@ -135,7 +141,7 @@ export default function Cart() {
         </SheetHeader>
 
         <ScrollArea className="flex-grow">
-          {currentPaymentStatus === 'Pending' && cartItems.length > 0 && (
+          {currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill && cartItems.length > 0 && (
             <div className="p-4 bg-yellow-50 border-b border-yellow-200 text-yellow-700 text-sm flex items-center gap-2">
               <AlertTriangle className="h-5 w-5" />
               <span>Bill is pending. Complete payment to place new orders.</span>
@@ -160,7 +166,7 @@ export default function Cart() {
                     value={specialRequests}
                     onChange={(e) => setSpecialRequests(e.target.value)}
                     className="min-h-[80px]"
-                    disabled={currentPaymentStatus === 'Pending'}
+                    disabled={currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill}
                   />
                 </div>
                 <Separator />
@@ -247,7 +253,7 @@ export default function Cart() {
                 <Button variant="outline" onClick={clearCart} className="w-full sm:flex-1" disabled={isSubmittingOrder}>
                     Clear Current Order
                 </Button>
-                <Button onClick={handleSubmitOrder} className="w-full sm:flex-1" disabled={isSubmittingOrder || currentPaymentStatus === 'Pending'}>
+                <Button onClick={handleSubmitOrder} className="w-full sm:flex-1" disabled={isSubmittingOrder || (currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill)}>
                     {isSubmittingOrder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Submit Current Order (₹{currentCartTotal.toFixed(2)})
                 </Button>
@@ -258,7 +264,7 @@ export default function Cart() {
                 </Button>
             ) : null }
             
-            {allOrdersForBill.length > 0 && ( // Show checkout if there are any orders, regardless of cartItems
+            {allOrdersForBill.length > 0 && ( 
                 <Button
                 onClick={() => {
                     if (billId) {
@@ -266,7 +272,7 @@ export default function Cart() {
                     }
                 }}
                 className="w-full"
-                disabled={!billId || isSubmittingOrder} // Keep disabled if an order is submitting
+                disabled={!billId || isSubmittingOrder} 
                 variant="default" 
                 >
                 <CreditCard className="mr-2 h-4 w-4" /> Proceed to Checkout
@@ -278,3 +284,4 @@ export default function Cart() {
     </Sheet>
   );
 }
+

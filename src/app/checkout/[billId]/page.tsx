@@ -28,14 +28,15 @@ export default function CheckoutPage() {
   const billIdFromUrl = params.billId as string; // This is the billId
   
   const { 
-    sessionId, // Get sessionId from AuthContext (which gets it from NextAuth session)
-    billId: authBillId, // billId from AuthContext (NextAuth session)
+    sessionId, 
+    billId: authBillId, 
     tableId, 
     isAuthenticated, 
-    currentPaymentStatus, // This now comes from NextAuth session, updated by AuthContext
-    isAuthContextLoading, // AuthContext's own loading state
-    confirmPaymentExternal, // New function to call external payment confirmation
-    sessionStatus, // from useSession() via AuthContext
+    currentPaymentStatus, 
+    isAuthContextLoading, 
+    confirmPaymentExternal, 
+    sessionStatus,
+    setHasExplicitlyRequestedBill // Added from AuthContext
   } = useAuth();
   const { toast } = useToast();
   
@@ -73,8 +74,8 @@ export default function CheckoutPage() {
     }
 
     if (isAuthenticated && authBillId === billIdFromUrl && sessionId) {
-        if (!isAuthContextLoading) { // Wait for AuthContext loading to resolve
-            if (currentPaymentStatus === 'Confirmed') { // New "paid" status
+        if (!isAuthContextLoading) { 
+            if (currentPaymentStatus === 'Confirmed') { 
                 router.replace(`/bill-status/${billIdFromUrl}`);
             } else {
                 setIsPageLoading(false);
@@ -83,11 +84,10 @@ export default function CheckoutPage() {
                 }
             }
         }
-    } else if (sessionStatus === 'unauthenticated' && !isAuthContextLoading) { // Ensure auth context is not loading
+    } else if (sessionStatus === 'unauthenticated' && !isAuthContextLoading) { 
         router.replace(tableId ? `/${tableId}` : '/');
         return;
     }
-    // If still loading auth context, isPageLoading remains true
   }, [
     isAuthenticated, authBillId, billIdFromUrl, tableId, router, 
     currentPaymentStatus, isAuthContextLoading, fetchBillTotal, billTotal, isFetchingBillTotal, sessionId, sessionStatus
@@ -95,11 +95,8 @@ export default function CheckoutPage() {
 
 
   const handleRequestBill = async () => {
-    // This button's functionality might change.
-    // Previously it set status to 'Pending' in local store.
-    // Now, 'Pending' is the default from /session/createsession.
-    // It can simply navigate to the bill status page.
     if (billIdFromUrl) {
+      setHasExplicitlyRequestedBill(true); // Set the flag
       router.push(`/bill-status/${billIdFromUrl}`);
     }
   };
@@ -119,12 +116,13 @@ export default function CheckoutPage() {
     }
 
     setIsProcessingPayment(true);
+    setHasExplicitlyRequestedBill(true); // Making payment also implies bill is actively being handled
+
     try {
-      // 1. Create Razorpay Order (this remains the same, frontend calls Razorpay's server)
       const createOrderResponse = await fetch('/api/payment/razorpay/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billId: billIdFromUrl, amount: billTotal }), // Use billIdFromUrl for Razorpay order notes
+        body: JSON.stringify({ billId: billIdFromUrl, amount: billTotal }), 
       });
       if (!createOrderResponse.ok) {
         const errorData = await createOrderResponse.json();
@@ -135,7 +133,6 @@ export default function CheckoutPage() {
         throw new Error(orderData.error || "Backend did not return Razorpay order ID.");
       }
 
-      // 2. Open Razorpay Checkout
       const options = {
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: orderData.amount.toString(), 
@@ -143,11 +140,9 @@ export default function CheckoutPage() {
         name: "SnapOrderEat",
         description: `Bill Payment for: ${billIdFromUrl}`,
         order_id: orderData.order_id,
-        handler: async function (response: any) { // Razorpay success callback
-          setIsProcessingPayment(true); // Keep loading true
+        handler: async function (response: any) { 
+          setIsProcessingPayment(true); 
           try {
-            // Check currentPaymentStatus before attempting to confirm again
-            // This is a client-side check. The server will enforce this too.
             if (currentPaymentStatus === 'Confirmed') {
                 toast({ title: "Already Confirmed", description: "This payment has already been confirmed.", variant: "default" });
                 router.push(`/bill-status/${billIdFromUrl}`);
@@ -161,12 +156,10 @@ export default function CheckoutPage() {
               toast({ title: "Payment Successful!", description: `Payment ID: ${response.razorpay_payment_id}. Bill status updated.` });
               router.push(`/bill-status/${billIdFromUrl}`);
             } else {
-              // This path might not be hit if confirmPaymentExternal throws, as it does for the "already confirmed" case.
               toast({ title: "Payment Confirmation Pending", description: "Payment processed, but final confirmation is pending. Check bill status or contact support.", variant: "default" });
             }
           } catch (verifyError: any) {
             console.error("Payment confirmation API error (in Razorpay handler):", verifyError);
-            // Specifically handle the "Session payment status is Confirmed, not Pending" error
             if (verifyError?.message && 
                 (verifyError.message.includes("Session payment status is Confirmed, not Pending") ||
                  verifyError.message.toLowerCase().includes("already confirmed"))) {
