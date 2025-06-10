@@ -5,22 +5,45 @@ import Link from 'next/link';
 import CartIcon from '@/components/cart/CartIcon';
 import Cart from '@/components/cart/Cart';
 import VacateTableDialog from './VacateTableDialog';
-import { useSession, signOut } from 'next-auth/react'; // Use NextAuth
+import { useSession } from 'next-auth/react'; 
 import { useCart } from '@/contexts/CartContext';
-import { useOrders } from '@/contexts/OrderContext';
+// Removed: import { useOrders } from '@/contexts/OrderContext';
 import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
+import type { OrderType } from '@/types';
+import { useAuth } from '@/contexts/AuthContext'; // For logout functionality if VacateTableDialog's onConfirm needs it directly
+
+const fetchOrdersForBillHeaderQuery = async (billId: string | null): Promise<OrderType[]> => {
+  if (!billId) return [];
+  // This API route should exist and return orders for a billId
+  const response = await fetch(`/api/orders?billId=${billId}`); 
+  if (!response.ok) {
+    // Don't throw an error here for the header check, just return empty or handle silently
+    // as this is a non-critical check for UI.
+    // console.error(`Header: Failed to fetch orders for bill ${billId}`);
+    return []; 
+  }
+  try {
+    const fetchedOrders: OrderType[] = await response.json();
+    return fetchedOrders;
+  } catch (e) {
+    // console.error(`Header: Error parsing orders for bill ${billId}`, e);
+    return [];
+  }
+};
 
 export default function Header() {
-  const { data: session, status } = useSession(); // Get session from NextAuth
+  const { data: session, status } = useSession(); 
+  const { logout: authContextLogout } = useAuth(); // Get logout from AuthContext
   const isAuthenticated = status === 'authenticated';
   const tableId = session?.user?.tableId;
   const billId = session?.user?.billId;
 
   const { setIsCartSheetOpen } = useCart();
-  const { getOrdersByBillId } = useOrders();
+  // Removed: const { getOrdersByBillId } = useOrders();
 
   const [isVacateDialogOpen, setIsVacateDialogOpen] = useState(false);
   const [hasMounted, setHasMounted] = useState(false);
@@ -29,20 +52,25 @@ export default function Header() {
     setHasMounted(true);
   }, []);
 
+  const { data: ordersForBill } = useQuery<OrderType[], Error>({
+    queryKey: ['ordersForBillForHeader', billId],
+    queryFn: () => fetchOrdersForBillHeaderQuery(billId),
+    enabled: !!billId && isAuthenticated && hasMounted, // Enable only if billId and auth exist and component mounted
+    staleTime: 1000 * 60 * 1, // Cache for 1 minute for this specific header check
+    refetchOnWindowFocus: false,
+  });
+
   const hasPlacedOrders = useMemo(() => {
-    if (isAuthenticated && billId) {
-      return getOrdersByBillId(billId).length > 0;
+    if (isAuthenticated && billId && ordersForBill) {
+      return ordersForBill.length > 0;
     }
     return false;
-  }, [isAuthenticated, billId, getOrdersByBillId]);
+  }, [isAuthenticated, billId, ordersForBill]);
 
   const handleVacateConfirm = async () => {
-    await signOut({ redirect: false }); // Call NextAuth signOut
-    // The AuthContext will react to session changes and reset its state.
-    // Router push to '/' might be good here or handled by page effects based on auth state.
-    // For now, let session change drive behavior.
+    // Use logout from AuthContext which handles NextAuth signOut and internal state resets
+    authContextLogout(); 
     setIsVacateDialogOpen(false);
-    // router.push('/'); // Optional: force redirect after sign out
   };
 
   const headerTransition = { duration: 0.4, ease: [0.42, 0, 0.58, 1] };
