@@ -89,9 +89,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       console.log('[AuthContext] logout: Finalizing logout process.');
       isLoggingOutRef.current = false;
       setIsAuthContextLoadingInternal(false); 
-      // Reset trigger to prevent immediate re-validation if sessionStatus briefly flashes to 'authenticated' then 'unauthenticated'
       setValidateCurrentSessionTrigger(0);
-      prevSessionIdRef.current = null; // Also clear the prevSessionIdRef
+      prevSessionIdRef.current = null; 
     }
   }, []);
 
@@ -168,7 +167,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const validate = useCallback(async () => {
     if (isLoggingOutRef.current) {
       console.log('[AuthContext] validate: Logout in progress, aborting validation.');
-      if (isSessionValidationLoading) setIsSessionValidationLoading(false);
       return;
     }
 
@@ -212,7 +210,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (e) {
         console.error('[AuthContext] validate: Failed to parse JSON from /api/session/check-status. Response text:', responseText.substring(0, 200));
          parsedValidationData.message = `Non-JSON response from session check. Status: ${validationResponse.status}`;
-         parsedValidationData.error = parsedValidationData.message; // Ensure error field is also populated
+         parsedValidationData.error = parsedValidationData.message; 
          parsedValidationData.success = false;
       }
       console.log('[AuthContext] validate: Parsed validation data from /api/session/check-status:', parsedValidationData);
@@ -223,6 +221,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const errorMessage = parsedValidationData.message || parsedValidationData.error || `Session validation failed (status ${errorStatus}). Please log in again.`;
         console.error('[AuthContext] validate: /api/session/check-status call failed or success=false. Status:', errorStatus, 'Parsed Data:', parsedValidationData);
         setExternalSessionError(errorMessage);
+        // setIsSessionValidationLoading(false); // Moved to finally
         if (!isLoggingOutRef.current) logout(); 
         return; 
       }
@@ -287,10 +286,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     } else if (sessionStatus === 'unauthenticated' || (sessionStatus === 'authenticated' && !session?.user?.sessionId)) {
         console.log(`[AuthContext] Session status: ${sessionStatus}, session has sessionId: ${!!session?.user?.sessionId}. Resetting validation trigger and loading state.`);
-        // setValidateCurrentSessionTrigger(0); // This was moved to the next effect to avoid loops
-        if(isSessionValidationLoading) setIsSessionValidationLoading(false);
+        // No longer setting isSessionValidationLoading here. It's managed by validate().
     }
-  }, [sessionStatus, session, validateCurrentSessionTrigger, validate, logout, externalSessionError, isSessionValidationLoading]);
+  }, [sessionStatus, session, validateCurrentSessionTrigger, validate, logout, externalSessionError]);
 
   useEffect(() => {
     const currentSessId = session?.user?.sessionId;
