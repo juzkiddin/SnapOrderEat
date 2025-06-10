@@ -25,7 +25,18 @@ import {
 
 export default function TablePage() {
   const params = useParams();
-  const tableIdFromUrl = params.tableId as string;
+  
+  let tableIdFromUrl: string | undefined = undefined;
+  const tableIdParam = params?.tableId; // Access the property first
+
+  if (typeof tableIdParam === 'string') {
+    tableIdFromUrl = tableIdParam;
+  } else if (Array.isArray(tableIdParam) && tableIdParam.length > 0 && typeof tableIdParam[0] === 'string') {
+    tableIdFromUrl = tableIdParam[0];
+    // This case is unlikely for a route like /[tableId]/page.tsx but good for robustness
+    console.warn(`[TablePage] tableId parameter was an array, using the first element: ${tableIdParam[0]}`);
+  }
+
 
   const {
     isAuthenticated,
@@ -64,54 +75,43 @@ export default function TablePage() {
     if (externalSessionError) {
         console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Forcing login, reset successful login flag.");
         setShowLogin(true);
-        setHasHadSuccessfulLogin(false); // Reset this flag if there's a session error
+        setHasHadSuccessfulLogin(false); 
         return;
     }
 
-    // If login was successful (LoginFlow called onLoginSuccess),
-    // from this point on, LoginFlow should be hidden unless a new explicit error requires showing it again.
     if (hasHadSuccessfulLogin) {
-        setShowLogin(false); // ****** KEY CHANGE: Hide LoginFlow immediately ******
+        setShowLogin(false); 
 
         if (isAuthContextLoading) {
-            // AuthContext is still doing background work (e.g., validation after NextAuth signIn)
-            // Page will show its own loader because showLogin is false.
             console.log("[TablePage Effect] Has successful login, AuthContext is loading -> LoginFlow hidden. Page will show its own loader.");
             return; 
         }
         
-        // AuthContext is NOT loading. Check session validity.
         if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
             if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
                 console.log("[TablePage Effect] Has successful login, but Bill is Confirmed/Completed. Forcing logout.");
-                logout(); // This will trigger externalSessionError or change isAuthenticated. AuthContext's error will then handle showLogin.
-                // setHasHadSuccessfulLogin(false); // This will be handled by the externalSessionError block at the top
+                logout(); 
             } else {
                 console.log("[TablePage Effect] Has successful login, Session active & valid, bill not paid -> Showing menu (LoginFlow remains hidden).");
-                // setShowLogin(false); // Already set at the start of hasHadSuccessfulLogin block
             }
         } else {
-            // Session became invalid AFTER initial login success (e.g. background validation failed, or isAuthenticated is false post-NextAuth-signIn)
             console.log("[TablePage Effect] Has successful login, but session now invalid (not matching current auth state) -> Forcing login.");
-            setShowLogin(true); // Show LoginFlow again due to this new error/state mismatch
-            setHasHadSuccessfulLogin(false); // Reset the flag, as the previous "successful login" is no longer valid
+            setShowLogin(true); 
+            setHasHadSuccessfulLogin(false); 
         }
         return; 
     }
 
-    // If NO prior successful login (hasHadSuccessfulLogin is false):
-    // This block handles initial page load or when hasHadSuccessfulLogin has been reset due to an error.
     if (isAuthContextLoading) {
         console.log("[TablePage Effect] No prior successful login, AuthContext is loading -> LoginFlow shown.");
         setShowLogin(true); 
         return;
     }
 
-    // AuthContext is loaded, no prior successful login, now check credentials from NextAuth session
     if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
          if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
             console.log("[TablePage Effect] No prior successful login, Bill Confirmed/Completed. Forcing logout.");
-            logout(); // AuthContext's error will handle showLogin.
+            logout(); 
          } else {
             console.log("[TablePage Effect] No prior successful login, Session active & valid (from NextAuth) -> Showing menu.");
             setShowLogin(false);
@@ -222,7 +222,7 @@ export default function TablePage() {
     setSelectedCategory(categoryName);
     setSearchTerm("");
     setIsMenuLoading(true);
-    setMenuItems([]); // Clear current items immediately to prevent flicker
+    setMenuItems([]); 
     setMenuError(null);
     try {
       const response = await fetch('/api/menu/items', {
@@ -245,8 +245,6 @@ export default function TablePage() {
     } catch (error: any) {
       console.error(`[TablePage CategorySelect] Catch block error for ${categoryName}:`, error.message);
       setMenuError(error.message);
-      // menuItems is already empty or will be if an error occurs during fetch.
-      // If you want to fall back to sample data on specific errors, handle here.
     } finally {
       setIsMenuLoading(false);
       console.log(`[TablePage CategorySelect] Finished fetching for ${categoryName}. isMenuLoading: false`);
@@ -261,7 +259,7 @@ export default function TablePage() {
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center">
         <Info className="h-16 w-16 text-destructive mb-4" />
         <h1 className="text-2xl font-semibold mb-2">Invalid Table Link</h1>
-        <p className="text-muted-foreground">Scan a valid QR code.</p>
+        <p className="text-muted-foreground">Scan a valid QR code or ensure the URL is correct.</p>
       </div>
     );
   }
@@ -272,13 +270,11 @@ export default function TablePage() {
               onLoginSuccess={() => {
                 console.log("[LoginFlow Success] onLoginSuccess called, setting hasHadSuccessfulLogin to true.");
                 setHasHadSuccessfulLogin(true);
-                // setShowLogin(false); // No longer needed here, main useEffect will handle it
               }}
             />;
   }
 
-  // Covers AuthContext loading (background validation) AND initial menu items loading after login
-  if (!showLogin && (isAuthContextLoading || (isMenuLoading && menuItems.length === 0 && !menuError))) {
+  if (!showLogin && (isAuthContextLoading || (isMenuLoading && menuItems.length === 0 && !menuError && !selectedCategory))) { // Added !selectedCategory to allow category specific loading
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
