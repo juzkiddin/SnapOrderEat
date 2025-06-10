@@ -25,13 +25,16 @@ interface InitialMenuData {
 }
 
 const fetchInitialMenuData = async (): Promise<InitialMenuData> => {
+  console.log("[TablePage InitialMenuFetch] Attempting to fetch /api/menu...");
   const response = await fetch('/api/menu', { cache: 'no-store' });
+  console.log("[TablePage InitialMenuFetch] /api/menu response status:", response.status);
   if (!response.ok) {
     const errorText = await response.text();
     console.error("[TablePage Tanstack] Failed to fetch initial menu:", response.status, errorText);
     throw new Error(`Failed to fetch initial menu: ${response.status} ${errorText.substring(0, 100)}`);
   }
   const data = await response.json();
+  console.log("[TablePage InitialMenuFetch] /api/menu data received:", data);
   return {
     menuItems: data.menuItems || localSampleMenuData,
     categories: data.categories || [],
@@ -67,6 +70,7 @@ export default function TablePage() {
     tableIdFromUrl = tableIdParam[0];
   }
 
+
   const {
     isAuthenticated,
     tableId: authTableId,
@@ -89,6 +93,84 @@ export default function TablePage() {
   const cartItemCount = getItemCount();
   const cartTotal = getCartTotal();
 
+  useEffect(() => {
+    const logPrefix = "[TablePage Effect]";
+    // console.log(`${logPrefix} Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLoginState: ${showLogin}, HasHadSuccessfulLogin: ${hasHadSuccessfulLogin}`);
+
+    if (externalSessionError) {
+        console.log(`${logPrefix} External session error detected: "${externalSessionError}". Showing login, resetting success flag.`);
+        setShowLogin(true);
+        setHasHadSuccessfulLogin(false); 
+        return;
+    }
+
+    if (hasHadSuccessfulLogin) {
+        // User has completed the LoginFlow.tsx steps.
+        setShowLogin(false); // Primary intent: menu should be shown or TablePage loader.
+
+        if (isAuthContextLoading) {
+            // AuthContext is still processing (e.g., validating session post-signIn).
+            // LoginFlow is hidden; TablePage will show its loader.
+            // console.log(`${logPrefix} HasHadSuccessfulLogin is true, AuthContext is loading. LoginFlow hidden, page loader may show.`);
+            return;
+        }
+
+        // AuthContext is NOT loading.
+        // If, after all processing, the session is NOT authenticated,
+        // it implies the post-signIn validation failed or session was invalidated.
+        if (!isAuthenticated) {
+            console.log(`${logPrefix} HasHadSuccessfulLogin is true, AuthContext not loading, BUT !isAuthenticated. Forcing login.`);
+            setShowLogin(true);
+            setHasHadSuccessfulLogin(false); // The "successful" login flow didn't result in a lasting valid session.
+        } else if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
+            // Valid session, but payment is done. Logout.
+            console.log(`${logPrefix} HasHadSuccessfulLogin is true, Session is valid, but payment is ${currentPaymentStatus}. Logging out.`);
+            logout(); // This will likely set externalSessionError or change isAuthenticated, triggering re-evaluation.
+        }
+        // If isAuthenticated and payment status is not terminal, menu stays visible (showLogin remains false).
+        return;
+    }
+
+    // Initial load or hasHadSuccessfulLogin is false (user hasn't gone through LoginFlow yet OR it was reset).
+    if (isAuthContextLoading) {
+        // console.log(`${logPrefix} Initial load / No prior success, AuthContext is loading. Showing LoginFlow.`);
+        setShowLogin(true); 
+        return;
+    }
+
+    // AuthContext not loading, user hasn't completed LoginFlow.
+    if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
+        // Session is already valid (e.g., user refreshes page with active session).
+        if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
+            // console.log(`${logPrefix} Initial load / No prior success, existing valid session, but payment is ${currentPaymentStatus}. Logging out.`);
+            logout();
+        } else {
+            // console.log(`${logPrefix} Initial load / No prior success, existing valid session, payment not terminal. Showing menu.`);
+            setShowLogin(false); // Show menu directly.
+        }
+    } else {
+        // No valid existing session, and user hasn't completed LoginFlow.
+        // console.log(`${logPrefix} Initial load / No prior success, no valid existing session. Showing LoginFlow.`);
+        setShowLogin(true);
+    }
+  }, [
+    isAuthenticated, authTableId, tableIdFromUrl, authSessionId, authBillId,
+    currentPaymentStatus, isAuthContextLoading, externalSessionError, logout, hasHadSuccessfulLogin
+  ]);
+
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (!showLogin) {
+      setShowWelcomeMessage(true);
+      timer = setTimeout(() => setShowWelcomeMessage(false), 1500);
+    } else {
+      setShowWelcomeMessage(false);
+    }
+    return () => clearTimeout(timer);
+  }, [showLogin]);
+
+
   const {
     data: initialMenuData,
     isLoading: isInitialMenuLoading,
@@ -97,9 +179,18 @@ export default function TablePage() {
   } = useQuery<InitialMenuData, Error>({
     queryKey: ['initialMenu', tableIdFromUrl],
     queryFn: fetchInitialMenuData,
-    enabled: !showLogin && !isAuthContextLoading && isAuthenticated,
+    enabled: !showLogin && !isAuthContextLoading && isAuthenticated, // Only fetch if logged in, not loading auth, and menu should be shown
     staleTime: 1000 * 60 * 15, // 15 minutes for initial general menu info
+    onSuccess: (data) => {
+      console.log("[TablePage InitialMenuFetch] Initial menu data set. Categories:", data.categories, "Sample items count:", data.menuItems.length);
+    },
+    onError: (error) => {
+        console.error("[TablePage InitialMenuFetch] Error fetching initial menu:", error);
+    }
   });
+
+  // console.log(`[TablePage Tanstack Query InitialMenu] enabled: ${!showLogin && !isAuthContextLoading && isAuthenticated}, isLoading: ${isInitialMenuLoading}, error: ${initialMenuError}, showLogin: ${showLogin}, isAuthContextLoading: ${isAuthContextLoading}, isAuthenticated: ${isAuthenticated}`);
+
 
   const initialSampleMenuItems = useMemo(() => initialMenuData?.menuItems || [], [initialMenuData]);
   const fetchedCategories = useMemo(() => initialMenuData?.categories || [], [initialMenuData]);
@@ -129,54 +220,6 @@ export default function TablePage() {
     return initialSampleMenuItems;
   }, [selectedCategory, categorySpecificItems, initialSampleMenuItems]);
 
-  useEffect(() => {
-    if (externalSessionError) {
-        setShowLogin(true);
-        setHasHadSuccessfulLogin(false); 
-        return;
-    }
-    if (hasHadSuccessfulLogin) {
-        setShowLogin(false); 
-        if (isAuthContextLoading) return; 
-        
-        if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
-            if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
-                logout(); 
-            }
-        } else {
-            setShowLogin(true); 
-            setHasHadSuccessfulLogin(false); 
-        }
-        return; 
-    }
-    if (isAuthContextLoading) {
-        setShowLogin(true); 
-        return;
-    }
-    if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
-         if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
-            logout(); 
-         } else {
-            setShowLogin(false);
-         }
-    } else {
-        setShowLogin(true);
-    }
-  }, [
-    isAuthenticated, authTableId, tableIdFromUrl, authSessionId, authBillId,
-    currentPaymentStatus, isAuthContextLoading, externalSessionError, logout, hasHadSuccessfulLogin
-  ]);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (!showLogin) {
-      setShowWelcomeMessage(true);
-      timer = setTimeout(() => setShowWelcomeMessage(false), 1500);
-    } else {
-      setShowWelcomeMessage(false);
-    }
-    return () => clearTimeout(timer);
-  }, [showLogin]);
 
   const categoryDetails = useMemo(() => {
     return fetchedCategories
@@ -236,7 +279,10 @@ export default function TablePage() {
   if (showLogin) {
     return <LoginFlow
               tableIdFromUrl={tableIdFromUrl}
-              onLoginSuccess={() => setHasHadSuccessfulLogin(true)}
+              onLoginSuccess={() => {
+                console.log("[LoginFlow Success] onLoginSuccess called, setting hasHadSuccessfulLogin to true.");
+                setHasHadSuccessfulLogin(true);
+              }}
             />;
   }
 
@@ -304,3 +350,4 @@ export default function TablePage() {
     </div>
   );
 }
+
