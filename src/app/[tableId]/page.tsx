@@ -68,53 +68,56 @@ export default function TablePage() {
         return;
     }
 
-    // If login was successful, but auth context is still loading (e.g., background validation)
-    // ensure LoginFlow is hidden. The page will show its own loader.
+    // If login was successful (LoginFlow called onLoginSuccess),
+    // from this point on, LoginFlow should be hidden unless a new explicit error requires showing it again.
     if (hasHadSuccessfulLogin) {
+        setShowLogin(false); // ****** KEY CHANGE: Hide LoginFlow immediately ******
+
         if (isAuthContextLoading) {
-            console.log("[TablePage Effect] Has successful login, AuthContext is loading -> Ensuring LoginFlow is hidden (setShowLogin(false)). Page will show its own loader.");
-            setShowLogin(false); 
+            // AuthContext is still doing background work (e.g., validation after NextAuth signIn)
+            // Page will show its own loader because showLogin is false.
+            console.log("[TablePage Effect] Has successful login, AuthContext is loading -> LoginFlow hidden. Page will show its own loader.");
             return; 
         }
-        // After auth context loading, re-check session validity
+        
+        // AuthContext is NOT loading. Check session validity.
         if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
             if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
                 console.log("[TablePage Effect] Has successful login, but Bill is Confirmed/Completed. Forcing logout.");
-                logout(); // This will trigger externalSessionError or change isAuthenticated
-                setShowLogin(true); // Ensure login flow is shown after logout actions
-                setHasHadSuccessfulLogin(false);
+                logout(); // This will trigger externalSessionError or change isAuthenticated. AuthContext's error will then handle showLogin.
+                // setHasHadSuccessfulLogin(false); // This will be handled by the externalSessionError block at the top
             } else {
-                console.log("[TablePage Effect] Has successful login, Session active & valid, bill not paid -> Showing menu.");
-                setShowLogin(false);
+                console.log("[TablePage Effect] Has successful login, Session active & valid, bill not paid -> Showing menu (LoginFlow remains hidden).");
+                // setShowLogin(false); // Already set at the start of hasHadSuccessfulLogin block
             }
         } else {
-            // If session became invalid after initial login success (e.g. background validation failed)
-            console.log("[TablePage Effect] Has successful login, but session now invalid (e.g., isAuthenticated is false post-validation) -> Forcing login.");
-            setShowLogin(true);
-            setHasHadSuccessfulLogin(false);
+            // Session became invalid AFTER initial login success (e.g. background validation failed, or isAuthenticated is false post-NextAuth-signIn)
+            console.log("[TablePage Effect] Has successful login, but session now invalid (not matching current auth state) -> Forcing login.");
+            setShowLogin(true); // Show LoginFlow again due to this new error/state mismatch
+            setHasHadSuccessfulLogin(false); // Reset the flag, as the previous "successful login" is no longer valid
         }
-        return; // Important to return after handling the `hasHadSuccessfulLogin` case
+        return; 
     }
 
-    // If no prior successful login:
+    // If NO prior successful login (hasHadSuccessfulLogin is false):
+    // This block handles initial page load or when hasHadSuccessfulLogin has been reset due to an error.
     if (isAuthContextLoading) {
-        console.log("[TablePage Effect] No prior successful login, AuthContext is loading -> Ensuring login is shown.");
-        setShowLogin(true); // If auth is loading and no prior success, show login
+        console.log("[TablePage Effect] No prior successful login, AuthContext is loading -> LoginFlow shown.");
+        setShowLogin(true); 
         return;
     }
 
-    // AuthContext is loaded, no prior successful login, now check credentials
+    // AuthContext is loaded, no prior successful login, now check credentials from NextAuth session
     if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
          if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
             console.log("[TablePage Effect] No prior successful login, Bill Confirmed/Completed. Forcing logout.");
-            logout();
-            setShowLogin(true);
+            logout(); // AuthContext's error will handle showLogin.
          } else {
-            console.log("[TablePage Effect] No prior successful login, Session active & valid -> Showing menu.");
+            console.log("[TablePage Effect] No prior successful login, Session active & valid (from NextAuth) -> Showing menu.");
             setShowLogin(false);
          }
     } else {
-        console.log("[TablePage Effect] No prior successful login, Session invalid or incomplete -> Showing login.");
+        console.log("[TablePage Effect] No prior successful login, Session invalid or incomplete (from NextAuth) -> Showing login.");
         setShowLogin(true);
     }
 
@@ -307,6 +310,8 @@ export default function TablePage() {
     </div>
   );
 }
+    
+
     
 
     
