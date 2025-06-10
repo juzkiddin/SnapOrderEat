@@ -10,33 +10,62 @@ import MenuContentDisplay from '@/components/menu/MenuContentDisplay';
 import SpecialRequestDialog from '@/components/menu/SpecialRequestDialog';
 import PageFloatingButtons from '@/components/layout/PageFloatingButtons';
 import { Button } from '@/components/ui/button';
-
 import type { MenuItemType } from '@/types';
 import { Info, Loader2, AlertTriangle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
-import {
-  sampleMenuData as localSampleMenuData,
-} from '@/lib/dataValues';
+import { sampleMenuData as localSampleMenuData } from '@/lib/dataValues';
+import { useQuery } from '@tanstack/react-query';
+
+interface InitialMenuData {
+  menuItems: MenuItemType[];
+  categories: { name: string; iconName: string }[];
+}
+
+const fetchInitialMenuData = async (): Promise<InitialMenuData> => {
+  const response = await fetch('/api/menu', { cache: 'no-store' });
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[TablePage Tanstack] Failed to fetch initial menu:", response.status, errorText);
+    throw new Error(`Failed to fetch initial menu: ${response.status} ${errorText.substring(0, 100)}`);
+  }
+  const data = await response.json();
+  return {
+    menuItems: data.menuItems || localSampleMenuData,
+    categories: data.categories || [],
+  };
+};
+
+const fetchCategoryItems = async (categoryName: string): Promise<MenuItemType[]> => {
+  const response = await fetch('/api/menu/items', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ categoryName }),
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: `Status: ${response.status} ${response.statusText}` }));
+    console.error(`[TablePage Tanstack] Error from /api/menu/items for ${categoryName}:`, errorData);
+    throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
+  }
+  const data: MenuItemType[] = await response.json();
+  return data;
+};
 
 
 export default function TablePage() {
   const params = useParams();
   
   let tableIdFromUrl: string | undefined = undefined;
-  const tableIdParam = params?.tableId; // Access the property first
+  const tableIdParam = params?.tableId;
 
   if (typeof tableIdParam === 'string') {
     tableIdFromUrl = tableIdParam;
   } else if (Array.isArray(tableIdParam) && tableIdParam.length > 0 && typeof tableIdParam[0] === 'string') {
     tableIdFromUrl = tableIdParam[0];
-    // This case is unlikely for a route like /[tableId]/page.tsx but good for robustness
-    console.warn(`[TablePage] tableId parameter was an array, using the first element: ${tableIdParam[0]}`);
   }
-
 
   const {
     isAuthenticated,
@@ -55,115 +84,88 @@ export default function TablePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showWelcomeMessage, setShowWelcomeMessage] = useState(true);
-
-  const [menuItems, setMenuItems] = useState<MenuItemType[]>([]);
-  const [initialSampleMenuItems, setInitialSampleMenuItems] = useState<MenuItemType[]>([]);
-
-  const [fetchedCategories, setFetchedCategories] = useState<{name: string; iconName: string}[]>([]);
-  const [isMenuLoading, setIsMenuLoading] = useState(true);
-  const [menuError, setMenuError] = useState<string | null>(null);
-
   const [isSpecialRequestDialogOpen, setIsSpecialRequestDialogOpen] = useState(false);
 
   const cartItemCount = getItemCount();
   const cartTotal = getCartTotal();
 
+  const {
+    data: initialMenuData,
+    isLoading: isInitialMenuLoading,
+    error: initialMenuError,
+    refetch: refetchInitialMenu,
+  } = useQuery<InitialMenuData, Error>({
+    queryKey: ['initialMenu', tableIdFromUrl],
+    queryFn: fetchInitialMenuData,
+    enabled: !showLogin && !isAuthContextLoading && isAuthenticated,
+    staleTime: 1000 * 60 * 15, // 15 minutes for initial general menu info
+  });
+
+  const initialSampleMenuItems = useMemo(() => initialMenuData?.menuItems || [], [initialMenuData]);
+  const fetchedCategories = useMemo(() => initialMenuData?.categories || [], [initialMenuData]);
+
+  const {
+    data: categorySpecificItems,
+    isLoading: isCategoryItemsLoading,
+    error: categoryItemsError,
+    refetch: refetchCategoryItems,
+  } = useQuery<MenuItemType[], Error>({
+    queryKey: ['categoryItems', selectedCategory],
+    queryFn: () => {
+      if (!selectedCategory) throw new Error("Category not selected for query");
+      return fetchCategoryItems(selectedCategory);
+    },
+    enabled: !!selectedCategory && !showLogin && !isAuthContextLoading && isAuthenticated,
+    staleTime: 1000 * 60 * 2, // 2 minutes for category specific items
+  });
+
+  const isOverallMenuLoading = isInitialMenuLoading || (selectedCategory ? isCategoryItemsLoading : false);
+  const overallMenuError = initialMenuError || (selectedCategory ? categoryItemsError : null);
+
+  const menuItemsToDisplay = useMemo(() => {
+    if (selectedCategory) {
+      return categorySpecificItems || [];
+    }
+    return initialSampleMenuItems;
+  }, [selectedCategory, categorySpecificItems, initialSampleMenuItems]);
 
   useEffect(() => {
-    console.log(`[TablePage Effect] Running. AuthContextLoading: ${isAuthContextLoading}, IsAuthenticated: ${isAuthenticated}, ExternalError: ${externalSessionError}, AuthTableId: ${authTableId}, URLTableId: ${tableIdFromUrl}, ShowLoginState: ${showLogin}, HasHadSuccessfulLogin: ${hasHadSuccessfulLogin}`);
-
     if (externalSessionError) {
-        console.log("[TablePage Effect] External session error found:", externalSessionError, "-> Forcing login, reset successful login flag.");
         setShowLogin(true);
         setHasHadSuccessfulLogin(false); 
         return;
     }
-
     if (hasHadSuccessfulLogin) {
         setShowLogin(false); 
-
-        if (isAuthContextLoading) {
-            console.log("[TablePage Effect] Has successful login, AuthContext is loading -> LoginFlow hidden. Page will show its own loader.");
-            return; 
-        }
+        if (isAuthContextLoading) return; 
         
         if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
             if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
-                console.log("[TablePage Effect] Has successful login, but Bill is Confirmed/Completed. Forcing logout.");
                 logout(); 
-            } else {
-                console.log("[TablePage Effect] Has successful login, Session active & valid, bill not paid -> Showing menu (LoginFlow remains hidden).");
             }
         } else {
-            console.log("[TablePage Effect] Has successful login, but session now invalid (not matching current auth state) -> Forcing login.");
             setShowLogin(true); 
             setHasHadSuccessfulLogin(false); 
         }
         return; 
     }
-
     if (isAuthContextLoading) {
-        console.log("[TablePage Effect] No prior successful login, AuthContext is loading -> LoginFlow shown.");
         setShowLogin(true); 
         return;
     }
-
     if (isAuthenticated && authTableId === tableIdFromUrl && authSessionId && authBillId) {
          if (currentPaymentStatus === 'Confirmed' || currentPaymentStatus === 'Completed') {
-            console.log("[TablePage Effect] No prior successful login, Bill Confirmed/Completed. Forcing logout.");
             logout(); 
          } else {
-            console.log("[TablePage Effect] No prior successful login, Session active & valid (from NextAuth) -> Showing menu.");
             setShowLogin(false);
          }
     } else {
-        console.log("[TablePage Effect] No prior successful login, Session invalid or incomplete (from NextAuth) -> Showing login.");
         setShowLogin(true);
     }
-
   }, [
     isAuthenticated, authTableId, tableIdFromUrl, authSessionId, authBillId,
     currentPaymentStatus, isAuthContextLoading, externalSessionError, logout, hasHadSuccessfulLogin
   ]);
-
-
-  useEffect(() => {
-    if (!showLogin && !isAuthContextLoading) { 
-      const fetchInitialMenu = async () => {
-        console.log("[TablePage InitialMenuFetch] Conditions met. Fetching initial menu (categories and sample items)...");
-        setIsMenuLoading(true);
-        setMenuError(null);
-        try {
-          const response = await fetch('/api/menu', { cache: 'no-store' });
-          console.log("[TablePage InitialMenuFetch] /api/menu response status:", response.status);
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error("[TablePage InitialMenuFetch] Failed to fetch initial menu:", response.status, errorText);
-            throw new Error(`Failed to fetch initial menu: ${response.status} ${errorText.substring(0,100)}`);
-          }
-          const data = await response.json();
-          console.log("[TablePage InitialMenuFetch] /api/menu data received:", data);
-          const sampleItems = data.menuItems || localSampleMenuData;
-          setInitialSampleMenuItems(sampleItems);
-          setMenuItems(sampleItems);
-          setFetchedCategories(data.categories || []);
-          console.log("[TablePage InitialMenuFetch] Initial menu data set. Categories:", data.categories, "Sample items count:", sampleItems.length);
-        } catch (error: any) {
-          console.error("[TablePage InitialMenuFetch] Error fetching initial menu:", error.message);
-          setMenuError(error.message || 'Could not load initial menu.');
-          setInitialSampleMenuItems(localSampleMenuData);
-          setMenuItems(localSampleMenuData);
-          setFetchedCategories([]);
-        } finally {
-          setIsMenuLoading(false);
-          console.log("[TablePage InitialMenuFetch] Finished initial menu fetch. isMenuLoading:", false);
-        }
-      };
-      fetchInitialMenu();
-    } else {
-      console.log(`[TablePage InitialMenuFetch] Skipped: showLogin: ${showLogin}, isAuthContextLoading: ${isAuthContextLoading}`);
-    }
-  }, [showLogin, isAuthContextLoading]); 
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -194,8 +196,8 @@ export default function TablePage() {
       .filter(cat => cat.itemCount > 0 || fetchedCategories.some(fc => fc.name === cat.name));
   }, [initialSampleMenuItems, fetchedCategories]);
 
-  const displayedItems = useMemo(() => {
-    let itemsToDisplay = menuItems;
+  const displayedItemsFromSearch = useMemo(() => {
+    let itemsToDisplay = menuItemsToDisplay;
     if (searchTerm) {
       itemsToDisplay = itemsToDisplay.filter(item =>
         item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -203,56 +205,23 @@ export default function TablePage() {
       );
     }
     return itemsToDisplay;
-  }, [searchTerm, menuItems]);
+  }, [searchTerm, menuItemsToDisplay]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
   };
 
   const clearSelectionAndSearch = useCallback(() => {
-    console.log("[TablePage Actions] Clearing selection and search. Resetting menuItems to initial samples.");
     setSelectedCategory(null);
     setSearchTerm("");
-    setMenuItems(initialSampleMenuItems);
-    setMenuError(null);
-  }, [initialSampleMenuItems]);
+  }, []);
 
-  const handleCategorySelect = useCallback(async (categoryName: string) => {
-    console.log(`[TablePage CategorySelect] Category selected: ${categoryName}. Fetching items...`);
+  const handleCategorySelect = useCallback((categoryName: string) => {
     setSelectedCategory(categoryName);
     setSearchTerm("");
-    setIsMenuLoading(true);
-    setMenuItems([]); 
-    setMenuError(null);
-    try {
-      const response = await fetch('/api/menu/items', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categoryName }),
-        cache: 'no-store',
-      });
-      console.log(`[TablePage CategorySelect] Response status from /api/menu/items for ${categoryName}: ${response.status}`);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `Status: ${response.status} ${response.statusText}` }));
-        console.error(`[TablePage CategorySelect] Error from /api/menu/items for ${categoryName}:`, errorData);
-        throw new Error(errorData.error || `Could not load items for ${categoryName}.`);
-      }
-      const data: MenuItemType[] = await response.json();
-      console.log(`[TablePage CategorySelect] Items received from API for ${categoryName} (count: ${data.length}):`, data.slice(0,3));
-      setMenuItems(data);
-      console.log(`[TablePage CategorySelect] menuItems state updated with ${data.length} items from API.`);
-    } catch (error: any) {
-      console.error(`[TablePage CategorySelect] Catch block error for ${categoryName}:`, error.message);
-      setMenuError(error.message);
-    } finally {
-      setIsMenuLoading(false);
-      console.log(`[TablePage CategorySelect] Finished fetching for ${categoryName}. isMenuLoading: false`);
-    }
   }, []);
 
   const openSpecialRequestDialog = () => setIsSpecialRequestDialogOpen(true);
-
 
   if (!tableIdFromUrl) {
     return (
@@ -267,14 +236,16 @@ export default function TablePage() {
   if (showLogin) {
     return <LoginFlow
               tableIdFromUrl={tableIdFromUrl}
-              onLoginSuccess={() => {
-                console.log("[LoginFlow Success] onLoginSuccess called, setting hasHadSuccessfulLogin to true.");
-                setHasHadSuccessfulLogin(true);
-              }}
+              onLoginSuccess={() => setHasHadSuccessfulLogin(true)}
             />;
   }
 
-  if (!showLogin && (isAuthContextLoading || (isMenuLoading && menuItems.length === 0 && !menuError && !selectedCategory))) { // Added !selectedCategory to allow category specific loading
+  const shouldShowPageLoader = !showLogin && (
+    isAuthContextLoading || 
+    (isOverallMenuLoading && (!selectedCategory ? initialSampleMenuItems.length === 0 : categorySpecificItems === undefined) && !overallMenuError)
+  );
+
+  if (shouldShowPageLoader) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -283,15 +254,25 @@ export default function TablePage() {
     );
   }
 
-
-  if (menuError) {
+  if (overallMenuError && !showLogin) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
         <h1 className="text-2xl font-semibold mb-2">{selectedCategory ? "Error Loading Items" : "Error Loading Menu"}</h1>
-        <p className="text-muted-foreground mb-3">{menuError}</p>
-        <Button onClick={() => selectedCategory ? handleCategorySelect(selectedCategory) : window.location.reload()} className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">Try Again</Button>
-        {selectedCategory && <Button onClick={clearSelectionAndSearch} className="mt-2 px-4 py-2 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90">Back to Categories</Button>}
+        <p className="text-muted-foreground mb-3">{overallMenuError.message}</p>
+        <Button 
+          onClick={() => selectedCategory ? refetchCategoryItems() : refetchInitialMenu()} 
+          className="mt-4">
+            Try Again
+        </Button>
+        {selectedCategory && (
+          <Button 
+            onClick={clearSelectionAndSearch} 
+            variant="outline"
+            className="mt-2">
+              Back to Categories
+          </Button>
+        )}
       </div>
     );
   }
@@ -300,14 +281,26 @@ export default function TablePage() {
     <div className="pb-24">
       <WelcomeBanner showWelcomeMessage={showWelcomeMessage} />
       <MenuNavigationControls selectedCategory={selectedCategory} searchTerm={searchTerm} onSearchChange={handleSearchChange} onClearSelectionAndSearch={clearSelectionAndSearch} />
-      <MenuContentDisplay searchTerm={searchTerm} selectedCategory={selectedCategory} displayedItems={displayedItems} categoryDetails={categoryDetails} categoryIcons={LucideIcons} onCategorySelect={handleCategorySelect} onClearSearch={clearSelectionAndSearch} setSearchTerm={setSearchTerm} />
-      <PageFloatingButtons showLogin={showLogin} selectedCategory={selectedCategory} searchTerm={searchTerm} onOpenSpecialRequestDialog={openSpecialRequestDialog} cartItemCount={cartItemCount} cartTotal={cartTotal} onOpenCartSheet={() => setIsCartSheetOpen(true)} />
+      <MenuContentDisplay 
+        searchTerm={searchTerm} 
+        selectedCategory={selectedCategory} 
+        displayedItems={displayedItemsFromSearch} 
+        categoryDetails={categoryDetails} 
+        categoryIcons={LucideIcons} 
+        onCategorySelect={handleCategorySelect} 
+        onClearSearch={clearSelectionAndSearch} 
+        setSearchTerm={setSearchTerm} 
+      />
+      <PageFloatingButtons 
+        showLogin={showLogin} 
+        selectedCategory={selectedCategory} 
+        searchTerm={searchTerm} 
+        onOpenSpecialRequestDialog={openSpecialRequestDialog} 
+        cartItemCount={cartItemCount} 
+        cartTotal={cartTotal} 
+        onOpenCartSheet={() => setIsCartSheetOpen(true)} 
+      />
       <SpecialRequestDialog isOpen={isSpecialRequestDialogOpen} onOpenChange={setIsSpecialRequestDialogOpen} />
     </div>
   );
 }
-    
-
-    
-
-    

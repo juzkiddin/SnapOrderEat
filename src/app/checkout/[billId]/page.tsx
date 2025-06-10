@@ -7,25 +7,25 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { CreditCard, Printer, Smartphone, ArrowLeft, AlertCircle, Loader2 } from 'lucide-react';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react'; // useCallback removed
 import type { OrderType } from '@/types';
 import Script from 'next/script';
 import { useToast } from '@/hooks/use-toast';
+import { useQuery } from '@tanstack/react-query';
 
-// As per the new API documentation
-type PaymentStatusFromApi = "Pending" | "Confirmed" | "Failed" | "Expired" | "NotCompleted";
-
-
-declare global {
-  interface Window {
-    Razorpay: any;
-  }
-}
+const fetchBillTotalQueryFn = async (billId: string | undefined): Promise<number> => {
+  if (!billId) throw new Error('Bill ID is required to fetch total.');
+  const response = await fetch(`/api/orders?billId=${billId}`);
+  if (!response.ok) throw new Error('Failed to fetch orders for bill total');
+  const orders: OrderType[] = await response.json();
+  const total = orders.reduce((sum, order) => sum + order.total, 0);
+  return total;
+};
 
 export default function CheckoutPage() {
   const params = useParams();
   const router = useRouter();
-  const billIdFromUrl = params.billId as string; // This is the billId
+  const billIdFromUrl = params.billId as string;
   
   const { 
     sessionId, 
@@ -36,34 +36,28 @@ export default function CheckoutPage() {
     isAuthContextLoading, 
     confirmPaymentExternal, 
     sessionStatus,
-    setHasExplicitlyRequestedBill // Added from AuthContext
+    setHasExplicitlyRequestedBill
   } = useAuth();
   const { toast } = useToast();
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isRazorpayScriptLoaded, setIsRazorpayScriptLoaded] = useState(false);
-  const [billTotal, setBillTotal] = useState<number | null>(null);
-  const [isFetchingBillTotal, setIsFetchingBillTotal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
-
-  const fetchBillTotal = useCallback(async (billId: string) => {
-    if (!billId) return;
-    setIsFetchingBillTotal(true);
-    try {
-      const response = await fetch(`/api/orders?billId=${billId}`);
-      if (!response.ok) throw new Error('Failed to fetch orders for bill total');
-      const orders: OrderType[] = await response.json();
-      const total = orders.reduce((sum, order) => sum + order.total, 0);
-      setBillTotal(total);
-    } catch (error) {
-      console.error("Error fetching bill total:", error);
-      setBillTotal(0); 
+  const { 
+    data: billTotal, 
+    isLoading: isFetchingBillTotal, 
+    error: billTotalError 
+  } = useQuery<number, Error>({
+    queryKey: ['billTotal', billIdFromUrl],
+    queryFn: () => fetchBillTotalQueryFn(billIdFromUrl),
+    enabled: !!billIdFromUrl && isAuthenticated && authBillId === billIdFromUrl && !isAuthContextLoading && currentPaymentStatus !== 'Confirmed',
+    staleTime: 1000 * 60, // 1 minute
+    onError: (err) => {
+      console.error("[CheckoutPage Tanstack] Error fetching bill total:", err);
       toast({ title: "Error", description: "Could not fetch bill total.", variant: "destructive"});
-    } finally {
-      setIsFetchingBillTotal(false);
     }
-  }, [toast]);
+  });
 
   useEffect(() => {
     if (!billIdFromUrl) {
@@ -79,34 +73,33 @@ export default function CheckoutPage() {
                 router.replace(`/bill-status/${billIdFromUrl}`);
             } else {
                 setIsPageLoading(false);
-                if (billTotal === null && !isFetchingBillTotal) {
-                  fetchBillTotal(billIdFromUrl);
-                }
             }
         }
     } else if (sessionStatus === 'unauthenticated' && !isAuthContextLoading) { 
         router.replace(tableId ? `/${tableId}` : '/');
         return;
     }
+    
+    if (!isAuthContextLoading && isPageLoading) setIsPageLoading(false);
+
   }, [
     isAuthenticated, authBillId, billIdFromUrl, tableId, router, 
-    currentPaymentStatus, isAuthContextLoading, fetchBillTotal, billTotal, isFetchingBillTotal, sessionId, sessionStatus
+    currentPaymentStatus, isAuthContextLoading, sessionId, sessionStatus, isPageLoading
   ]);
-
 
   const handleRequestBill = async () => {
     if (billIdFromUrl) {
-      setHasExplicitlyRequestedBill(true); // Set the flag
+      setHasExplicitlyRequestedBill(true);
       router.push(`/bill-status/${billIdFromUrl}`);
     }
   };
 
   const handleMakePaymentOnline = async () => {
     if (!sessionId) {
-      toast({ title: "Session Error", description: "No active session ID found. Please try logging in again.", variant: "destructive" });
+      toast({ title: "Session Error", description: "No active session ID found.", variant: "destructive" });
       return;
     }
-    if (!isRazorpayScriptLoaded || billTotal === null || billTotal <= 0) {
+    if (!isRazorpayScriptLoaded || billTotal === null || billTotal === undefined || billTotal <= 0) {
       toast({ title: "Payment Error", description: "Gateway not ready or bill amount invalid.", variant: "destructive" });
       return;
     }
@@ -116,7 +109,7 @@ export default function CheckoutPage() {
     }
 
     setIsProcessingPayment(true);
-    setHasExplicitlyRequestedBill(true); // Making payment also implies bill is actively being handled
+    setHasExplicitlyRequestedBill(true);
 
     try {
       const createOrderResponse = await fetch('/api/payment/razorpay/create-order', {
@@ -144,7 +137,7 @@ export default function CheckoutPage() {
           setIsProcessingPayment(true); 
           try {
             if (currentPaymentStatus === 'Confirmed') {
-                toast({ title: "Already Confirmed", description: "This payment has already been confirmed.", variant: "default" });
+                toast({ title: "Already Confirmed", description: "This payment has already been confirmed." });
                 router.push(`/bill-status/${billIdFromUrl}`);
                 setIsProcessingPayment(false);
                 return;
@@ -156,7 +149,7 @@ export default function CheckoutPage() {
               toast({ title: "Payment Successful!", description: `Payment ID: ${response.razorpay_payment_id}. Bill status updated.` });
               router.push(`/bill-status/${billIdFromUrl}`);
             } else {
-              toast({ title: "Payment Confirmation Pending", description: "Payment processed, but final confirmation is pending. Check bill status or contact support.", variant: "default" });
+              toast({ title: "Payment Confirmation Pending", description: "Payment processed, but final confirmation is pending. Check bill status or contact support."});
             }
           } catch (verifyError: any) {
             console.error("Payment confirmation API error (in Razorpay handler):", verifyError);
@@ -166,7 +159,6 @@ export default function CheckoutPage() {
               toast({
                 title: "Payment Already Confirmed",
                 description: "This session's payment was already confirmed.",
-                variant: "default"
               });
               router.push(`/bill-status/${billIdFromUrl}`);
             } else {
@@ -201,7 +193,7 @@ export default function CheckoutPage() {
     }
   };
   
-  if (isPageLoading || (isAuthenticated && (isAuthContextLoading || isFetchingBillTotal))) {
+  if (isPageLoading || (isAuthenticated && isAuthContextLoading) ) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -235,19 +227,20 @@ export default function CheckoutPage() {
             <CreditCard className="mx-auto h-12 w-12 text-primary mb-3" />
             <CardTitle className="text-3xl">Checkout</CardTitle>
             <CardDescription>Ready to settle your bill for Table {tableId || 'N/A'}?</CardDescription>
-            {billTotal !== null && !isFetchingBillTotal && (<p className="text-lg font-semibold mt-2">Total: ₹{billTotal.toFixed(2)}</p>)}
+            {(billTotal !== null && billTotal !== undefined && !isFetchingBillTotal) && (<p className="text-lg font-semibold mt-2">Total: ₹{billTotal.toFixed(2)}</p>)}
             {isFetchingBillTotal && (<div className="flex items-center justify-center mt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" /><p>Fetching total...</p></div>)}
+            {billTotalError && !isFetchingBillTotal && (<p className="text-xs text-center text-destructive mt-1">Could not load total. Try refreshing.</p>)}
           </CardHeader>
           <CardContent className="space-y-6 pt-6">
             <Button onClick={handleRequestBill} className="w-full py-6 text-lg" variant="outline" disabled={isProcessingPayment}>
               <Printer className="mr-3 h-6 w-6" />Request Bill from Waiter</Button>
             <Button onClick={handleMakePaymentOnline} className="w-full py-6 text-lg"
-              disabled={ !isRazorpayScriptLoaded || billTotal === null || billTotal <= 0 || isFetchingBillTotal || isProcessingPayment || !process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || !sessionId }>
+              disabled={ !isRazorpayScriptLoaded || billTotal === null || billTotal === undefined || billTotal <= 0 || isFetchingBillTotal || isProcessingPayment || !process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || !sessionId }>
               {isProcessingPayment ? <Loader2 className="mr-3 h-6 w-6 animate-spin" /> : <Smartphone className="mr-3 h-6 w-6" />}
               {isProcessingPayment ? 'Processing...' : 'Make Payment Online'}
             </Button>
-             {!isRazorpayScriptLoaded && billTotal !== null && billTotal > 0 && process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID && <p className="text-xs text-center text-muted-foreground">Initializing payment gateway...</p>}
-             {billTotal === 0 && !isFetchingBillTotal && <p className="text-xs text-center text-muted-foreground">No amount due. You can request the bill.</p>}
+             {!isRazorpayScriptLoaded && billTotal !== null && billTotal !== undefined && billTotal > 0 && process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID && <p className="text-xs text-center text-muted-foreground">Initializing payment gateway...</p>}
+             {(billTotal === 0 && !isFetchingBillTotal) && <p className="text-xs text-center text-muted-foreground">No amount due. You can request the bill.</p>}
              {!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID && <p className="text-xs text-center text-destructive">Online payment unavailable (Key ID missing).</p>}
              {!sessionId && isAuthenticated && <p className="text-xs text-center text-destructive">Online payment unavailable (Session ID missing).</p>}
           </CardContent>
@@ -261,5 +254,3 @@ export default function CheckoutPage() {
     </>
   );
 }
-
-    

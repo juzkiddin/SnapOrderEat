@@ -2,20 +2,21 @@
 "use client";
 
 import { useRouter } from 'next/navigation';
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useOrders } from '@/contexts/OrderContext';
+import { useOrders as useOrderActions } from '@/contexts/OrderContext'; // Renamed for clarity
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter, SheetClose } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import CartItemCard from './CartItemCard';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import type { OrderStatus, OrderItemType } from '@/types'; 
+import type { OrderStatus, OrderItemType, OrderType } from '@/types'; 
 import { Badge } from '@/components/ui/badge';
 import { Clock, ChefHat, CheckCircle2, ListOrdered, FileText, Home, CreditCard, Loader2, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const getOverallOrderStatus = (items: OrderItemType[]): OrderStatus => {
   if (!items || items.length === 0) return 'Pending';
@@ -31,6 +32,16 @@ const statusDisplayConfig: { [key in OrderStatus]: { text: string; Icon: React.E
   Finished: { text: "Finished", Icon: CheckCircle2, color: "bg-green-500 hover:bg-green-600" },
 };
 
+const fetchOrdersForBill = async (billId: string | null): Promise<OrderType[]> => {
+  if (!billId) return [];
+  const response = await fetch(`/api/orders?billId=${billId}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({})); // Attempt to parse error
+    throw new Error(errorData.error || `API error fetching orders: ${response.status}`);
+  }
+  const fetchedOrders: OrderType[] = await response.json();
+  return fetchedOrders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+};
 
 export default function Cart() {
   const {
@@ -47,49 +58,40 @@ export default function Cart() {
     isAuthenticated, 
     tableId, 
     currentPaymentStatus, 
-    hasExplicitlyRequestedBill // Added from AuthContext
+    hasExplicitlyRequestedBill
   } = useAuth();
-  const { 
-    addOrder, 
-    getOrdersByBillId, 
-    loadOrdersForBill, 
-    isLoading: ordersLoading, 
-    error: ordersError 
-  } = useOrders();
+  const { addOrder } = useOrderActions();
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const queryClient = useQueryClient();
 
   const currentCartTotal = getCartTotal();
 
-  useEffect(() => {
-    if (isAuthenticated && billId && isCartSheetOpen) {
-      loadOrdersForBill(billId);
-    }
-  }, [isAuthenticated, billId, isCartSheetOpen, loadOrdersForBill]);
-
-  const allOrdersForBill = useMemo(() => {
-    if (isAuthenticated && billId) {
-      return getOrdersByBillId(billId);
-    }
-    return [];
-  }, [isAuthenticated, billId, getOrdersByBillId]);
-
+  const { 
+    data: allOrdersForBillData, 
+    isLoading: ordersLoading, 
+    error: ordersError 
+  } = useQuery<OrderType[], Error>({
+    queryKey: ['ordersForBill', billId],
+    queryFn: () => fetchOrdersForBill(billId),
+    enabled: !!billId && isAuthenticated && isCartSheetOpen,
+    staleTime: 1000 * 30, // 30 seconds
+  });
+  
+  const allOrdersForBill = useMemo(() => allOrdersForBillData || [], [allOrdersForBillData]);
 
   const totalBillAmount = useMemo(() => {
     return allOrdersForBill.reduce((sum, order) => sum + order.total, 0);
   }, [allOrdersForBill]);
 
   const handleSubmitOrder = async () => {
-    if (cartItems.length === 0 || isSubmittingOrder) {
-      return;
-    }
+    if (cartItems.length === 0 || isSubmittingOrder) return;
     if (!billId) {
       toast({ title: "Authentication Error", description: "Cannot place order without a valid bill ID.", variant: "destructive" });
       return;
     }
 
-    // Check if payment is pending AND user explicitly requested bill
     if (currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill) {
       toast({
         title: "Order Blocked",
@@ -105,33 +107,28 @@ export default function Cart() {
     setIsSubmittingOrder(false);
     if (newOrder) {
       clearCart();
+      toast({ title: "Order Submitted!", description: `Order #${newOrder.id.slice(-6)} placed successfully.`});
+      queryClient.invalidateQueries({ queryKey: ['ordersForBill', billId] });
     } else {
       toast({ title: "Order Error", description: "Order submission failed. Please try again.", variant: "destructive" });
-      console.error("Order submission failed.");
     }
   };
 
   const handleGoToMenu = () => {
     setIsCartSheetOpen(false);
     setTimeout(() => {
-      if (tableId) {
-        router.push(`/${tableId}`);
-      } else {
-        router.push('/');
-      }
+      if (tableId) router.push(`/${tableId}`);
+      else router.push('/');
     }, 300); 
   };
   
   const handleNavigate = (path: string) => {
     setIsCartSheetOpen(false);
-    setTimeout(() => {
-      router.push(path);
-    }, 350); 
+    setTimeout(() => router.push(path), 350); 
   };
 
   const showContinueShoppingLink = cartItems.length === 0 && allOrdersForBill.length === 0;
   const showFooterActionButtons = !(cartItems.length === 0 && allOrdersForBill.length === 0 && !ordersLoading);
-
 
   return (
     <Sheet open={isCartSheetOpen} onOpenChange={setIsCartSheetOpen}>
@@ -166,7 +163,7 @@ export default function Cart() {
                     value={specialRequests}
                     onChange={(e) => setSpecialRequests(e.target.value)}
                     className="min-h-[80px]"
-                    disabled={currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill}
+                    disabled={(currentPaymentStatus === 'Pending' && hasExplicitlyRequestedBill) || isSubmittingOrder}
                   />
                 </div>
                 <Separator />
@@ -197,7 +194,7 @@ export default function Cart() {
           )}
           {ordersError && !ordersLoading && (
             <div className="p-6 text-center text-destructive">
-              <p>Error loading orders: {ordersError}</p>
+              <p>Error loading orders: {ordersError.message}</p>
             </div>
           )}
 
@@ -267,9 +264,7 @@ export default function Cart() {
             {allOrdersForBill.length > 0 && ( 
                 <Button
                 onClick={() => {
-                    if (billId) {
-                        handleNavigate(`/checkout/${billId}`);
-                    }
+                    if (billId) handleNavigate(`/checkout/${billId}`);
                 }}
                 className="w-full"
                 disabled={!billId || isSubmittingOrder} 
@@ -284,4 +279,3 @@ export default function Cart() {
     </Sheet>
   );
 }
-

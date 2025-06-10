@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
-import { useOrders } from '@/contexts/OrderContext';
+import { useOrders as useOrderActionsContext } from '@/contexts/OrderContext'; // For client-side status updates
 import type { OrderType, OrderStatus, OrderItemType } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { AlertCircle, CheckCircle2, ChefHat, Clock, ArrowLeft, Utensils, PackageCheck, CookingPot, Loader2 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
+import { useQuery } from '@tanstack/react-query';
 
 const itemStatusDetails: { [key in OrderStatus]: { text: string; Icon: React.ElementType; color: string; } } = {
   Pending: { text: "Pending", Icon: Clock, color: "bg-yellow-500" },
@@ -28,46 +29,54 @@ const overallOrderStatusDetails: { [key in OrderStatus | 'Mixed']: { text: strin
   Mixed: { text: "Items in various stages of preparation", Icon: ChefHat, color: "bg-orange-500", progress: 50 }, 
 };
 
+const fetchOrdersForBillQuery = async (billId: string | null): Promise<OrderType[]> => {
+  if (!billId) return [];
+  const response = await fetch(`/api/orders?billId=${billId}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `API error fetching orders: ${response.status}`);
+  }
+  const fetchedOrders: OrderType[] = await response.json();
+  return fetchedOrders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+};
+
 
 export default function OrderDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const orderIdFromUrl = params.orderId as string;
   
-  const { isAuthenticated, billId: authBillId, tableId } = useAuth(); // Added tableId
-  const { getOrderById, loadOrdersForBill, isLoading: ordersLoading, error: ordersError } = useOrders();
+  const { isAuthenticated, billId: authBillId, tableId } = useAuth();
+  const { getClientSideOrderById } = useOrderActionsContext(); // For simulated status updates
   
-  const [isInitiallyLoading, setIsInitiallyLoading] = useState(true);
+  const { 
+    data: ordersForBill, 
+    isLoading: ordersLoading, 
+    error: ordersError 
+  } = useQuery<OrderType[], Error>({
+    queryKey: ['ordersForBill', authBillId],
+    queryFn: () => fetchOrdersForBillQuery(authBillId),
+    enabled: !!authBillId && isAuthenticated,
+    staleTime: 1000 * 30,
+    refetchInterval: 15000, // Poll for order status updates every 15 seconds
+  });
 
-  // Effect to load orders for the bill if not already loaded or if specific order isn't found
+  const fetchedOrder = useMemo(() => {
+    if (!orderIdFromUrl || !ordersForBill) return null;
+    return ordersForBill.find(o => o.id === orderIdFromUrl) || null; 
+  }, [orderIdFromUrl, ordersForBill]);
+
+  // Use client-side simulated order if available, otherwise fall back to fetched order
+  // This allows seeing "Cooking", "Finished" status from simulation before API catches up
+  const clientSimulatedOrder = getClientSideOrderById(orderIdFromUrl);
+  const order = useMemo(() => clientSimulatedOrder || fetchedOrder, [clientSimulatedOrder, fetchedOrder]);
+
   useEffect(() => {
-    if (orderIdFromUrl && authBillId) {
-        const existingOrder = getOrderById(orderIdFromUrl);
-        if (!existingOrder) {
-            // console.log(`Order ${orderIdFromUrl} not in context, attempting to load for bill ${authBillId}`);
-            loadOrdersForBill(authBillId).finally(() => setIsInitiallyLoading(false));
-        } else {
-            setIsInitiallyLoading(false);
-        }
-    } else if (!orderIdFromUrl) {
-        setIsInitiallyLoading(false); // No orderId, nothing to load
-    }
-  }, [orderIdFromUrl, authBillId, getOrderById, loadOrdersForBill]);
-
-
-  const order = useMemo(() => {
-    if (!orderIdFromUrl) return null;
-    return getOrderById(orderIdFromUrl) || null; 
-  }, [orderIdFromUrl, getOrderById]);
-
-  // Redirect if order's billId doesn't match authenticated billId
-  useEffect(() => {
-    if (order && authBillId && order.billId !== authBillId) {
-        // User is trying to access an order not belonging to their current bill session
-        const redirectTableId = tableId || (authBillId ? authBillId.split('-')[2] : null); // Prioritize tableId from context
+    if (fetchedOrder && authBillId && fetchedOrder.billId !== authBillId) {
+        const redirectTableId = tableId || (authBillId ? authBillId.split('-')[2] : null);
         router.replace(redirectTableId ? `/${redirectTableId}` : '/'); 
     }
-  }, [order, authBillId, router, tableId]);
+  }, [fetchedOrder, authBillId, router, tableId]);
 
 
   const overallStatus = useMemo((): OrderStatus | 'Mixed' => {
@@ -75,15 +84,14 @@ export default function OrderDetailsPage() {
     const statuses = order.items.map(item => item.status);
     if (statuses.every(s => s === "Finished")) return "Finished";
     if (statuses.every(s => s === "Pending")) return "Pending";
-    // if (statuses.some(s => s === "Cooking") || (statuses.some(s => s === "Pending") && !statuses.every(s => s === "Pending"))) return "Cooking"; 
-    if (statuses.some(s => s === "Cooking") || statuses.some(s => s === "Finished")) return "Cooking"; // Simplified "Cooking" if not all Pending/Finished
+    if (statuses.some(s => s === "Cooking") || statuses.some(s => s === "Finished")) return "Cooking";
     return "Mixed"; 
   }, [order]);
 
   const currentOverallStatusDetails = overallOrderStatusDetails[overallStatus === 'Mixed' ? 'Cooking' : overallStatus];
 
 
-  if (isInitiallyLoading || ordersLoading) { 
+  if (ordersLoading && !order) { // Show loader if orders are loading and we don't have a client-side version yet
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
@@ -92,12 +100,12 @@ export default function OrderDetailsPage() {
     );
   }
 
-  if (ordersError) {
+  if (ordersError && !order) { // Show error if orders failed to load and no client-side version
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <AlertCircle className="h-24 w-24 text-destructive mb-6" />
         <h1 className="text-3xl font-bold mb-2">Error Loading Order</h1>
-        <p className="text-muted-foreground mb-6">{ordersError}</p>
+        <p className="text-muted-foreground mb-6">{ordersError.message}</p>
         <Button asChild variant="outline">
           <Link href={tableId ? `/${tableId}` : '/'}><ArrowLeft className="mr-2 h-4 w-4" /> Back to Menu</Link>
         </Button>
@@ -105,13 +113,13 @@ export default function OrderDetailsPage() {
     );
   }
   
-  if (!order) { 
+  if (!order && !ordersLoading) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
         <AlertCircle className="h-24 w-24 text-destructive mb-6" />
         <h1 className="text-3xl font-bold mb-2">Order Not Found</h1>
         <p className="text-muted-foreground mb-6">
-          We couldn't find an order with ID: {orderIdFromUrl || "N/A"}. It might still be processing or the ID is incorrect.
+          We couldn't find an order with ID: {orderIdFromUrl || "N/A"}.
         </p>
         <Button asChild variant="outline">
           <Link href={tableId ? `/${tableId}` : '/'}><ArrowLeft className="mr-2 h-4 w-4" /> Back to Menu</Link>
@@ -120,6 +128,11 @@ export default function OrderDetailsPage() {
     );
   }
   
+  if (!order) {
+      return <p>Unexpected: Order is null after loading checks.</p>;
+  }
+
+
   if (!isAuthenticated || (authBillId && order.billId !== authBillId)) {
      return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center p-4">
@@ -234,3 +247,4 @@ export default function OrderDetailsPage() {
     </div>
   );
 }
+
