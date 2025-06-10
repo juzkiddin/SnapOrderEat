@@ -10,3 +10,4 @@ interface ApiStore {
 export const store: ApiStore = {
   orders: [],
 };
+

@@ -7,6 +7,7 @@ import { useCart } from '@/contexts/CartContext';
 import { Button } from '@/components/ui/button';
 import { MinusCircle, PlusCircle, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import React from 'react'; // Import React
 
 interface CartItemCardProps {
   cartItem: CartItemType;
@@ -20,7 +21,7 @@ const buttonAnimationVariants = {
 
 const iconTransition = { duration: 0.2, ease: "easeInOut" };
 
-export default function CartItemCard({ cartItem }: CartItemCardProps) {
+function CartItemCardComponent({ cartItem }: CartItemCardProps) {
   const { updateItemQuantity, removeItemFromCart } = useCart();
 
   const handleQuantityChange = (newQuantity: number) => {
@@ -158,3 +159,5 @@ export default function CartItemCard({ cartItem }: CartItemCardProps) {
     </div>
   );
 }
+
+export default React.memo(CartItemCardComponent);

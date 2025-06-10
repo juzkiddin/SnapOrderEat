@@ -65,6 +65,4 @@ export const predefinedServiceRequests: PredefinedRequest[] = [
   { id: 'call_waiter', label: 'Call Waiter', icon: ConciergeBell, type: 'direct' },
 ];
 
-// For src/components/auth/LoginFlow.tsx
-export const MOCKED_WAITER_OTP = "654321"; 
     

@@ -34,7 +34,7 @@ const portionOptions = [
   { id: "full", label: "Full" },
 ];
 
-export default function MenuItemCard({ item }: MenuItemCardProps) {
+function MenuItemCardComponent({ item }: MenuItemCardProps) {
   const { cartItems, addItemToCart, updateItemQuantity } = useCart();
   const [isPortionDialogOpen, setIsPortionDialogOpen] = useState(false);
 
@@ -141,6 +141,7 @@ export default function MenuItemCard({ item }: MenuItemCardProps) {
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className={`object-cover ${!isAvailable ? 'grayscale' : ''}`}
               data-ai-hint={item.dataAiHint || "food item"}
+              priority={false} // Consider setting priority based on viewport visibility if many images
             />
             {!isAvailable && (
               <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
@@ -299,3 +300,5 @@ export default function MenuItemCard({ item }: MenuItemCardProps) {
     </>
   );
 }
+
+export default React.memo(MenuItemCardComponent);
