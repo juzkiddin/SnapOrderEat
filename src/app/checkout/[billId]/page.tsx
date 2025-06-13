@@ -7,11 +7,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { CreditCard, Printer, Smartphone, ArrowLeft, AlertCircle, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react'; // useCallback removed
+import { useEffect, useState } from 'react';
 import type { OrderType } from '@/types';
 import Script from 'next/script';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
+
+declare global {
+  interface Window {
+    Razorpay: any; // Add Razorpay to the window interface
+  }
+}
 
 const fetchBillTotalQueryFn = async (billId: string | undefined): Promise<number> => {
   if (!billId) throw new Error('Bill ID is required to fetch total.');
@@ -58,6 +64,13 @@ export default function CheckoutPage() {
       toast({ title: "Error", description: "Could not fetch bill total.", variant: "destructive"});
     }
   });
+
+  useEffect(() => {
+    // Check if Razorpay SDK is already loaded on mount
+    if (window.Razorpay) {
+      setIsRazorpayScriptLoaded(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (!billIdFromUrl) {
@@ -218,8 +231,15 @@ export default function CheckoutPage() {
   return (
     <>
       <Script id="razorpay-checkout-js" src="https://checkout.razorpay.com/v1/checkout.js"
-        onLoad={() => setIsRazorpayScriptLoaded(true)}
-        onError={(e) => toast({ title: "Gateway Error", description: "Could not load payment gateway.", variant: "destructive" })}
+        onLoad={() => {
+          console.log("Razorpay script loaded via onLoad callback.");
+          setIsRazorpayScriptLoaded(true);
+        }}
+        onError={(e) => {
+          console.error("Error loading Razorpay script:", e);
+          toast({ title: "Gateway Error", description: "Could not load payment gateway.", variant: "destructive" });
+        }}
+        strategy="afterInteractive" // Ensures script loads non-blockingly
       />
       <div className="max-w-md mx-auto py-8 sm:py-12">
         <Card className="shadow-xl">
@@ -254,3 +274,4 @@ export default function CheckoutPage() {
     </>
   );
 }
+
